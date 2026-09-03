@@ -301,9 +301,101 @@ grant select, insert, update, delete on
     public.billing_counters, public.invoices, public.invoice_lines, public.service_catalog
     to authenticated;
 
+-- ----------------------------------------------------------------------------
+-- 8. PROSSIMO_NUMERO — numerazione atomica di preventivi/fatture/proforma/note
+--    Sostituisce nextNum() del frontend (che leggeva il max da docs in memoria).
+--
+--    ⚠️ CONTRATTO D'USO — la correttezza fiscale dipende da CHI e QUANDO la
+--    chiama, non solo da come è scritta:
+--
+--    1. Va chiamata solo all'EMISSIONE del documento (transizione bozza →
+--       emesso), MAI alla creazione/salvataggio di una bozza. Ogni chiamata
+--       consuma un numero in modo definitivo e irreversibile: una bozza
+--       salvata, modificata più volte o mai emessa non deve mai passare di
+--       qui, altrimenti si bruciano numeri e si aprono buchi nella sequenza
+--       (problema in sede di controllo fiscale).
+--    2. Dopo uno SCARTO da parte dello SdI, il frontend NON deve richiamare
+--       questa funzione per ritrasmettere il documento: la fattura scartata
+--       si corregge e si ritrasmette con lo STESSO numero già assegnato alla
+--       prima emissione. Richiamarla di nuovo assegnerebbe un secondo numero
+--       allo stesso documento logico, disallineando la numerazione da quanto
+--       dichiarato all'Agenzia delle Entrate.
+-- ----------------------------------------------------------------------------
+create or replace function public.prossimo_numero(
+    p_emitter_id uuid,
+    p_tipo       text,
+    p_anno       integer
+)
+returns text
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+    v_num      integer;
+    v_prefisso text;
+begin
+    -- validazione dominio: errore leggibile invece di far fallire il CHECK
+    -- constraint sull'INSERT più sotto
+    if p_tipo not in ('preventivo','fattura','proforma','nota_credito') then
+        raise exception 'Tipo documento non valido: %', p_tipo
+            using errcode = '22023';  -- invalid_parameter_value
+    end if;
+
+    -- controllo permesso: solo chi può usare questo emittente
+    if not public.can_use_emitter(p_emitter_id) then
+        raise exception 'Non autorizzato a emettere sotto l''emittente %', p_emitter_id
+            using errcode = '42501';  -- insufficient_privilege
+    end if;
+
+    -- percorso principale: la riga contatore esiste già.
+    -- UPDATE...RETURNING legge, blocca e incrementa in un solo statement atomico:
+    -- due chiamate concorrenti si serializzano sul lock di riga, mai lo stesso numero.
+    update public.billing_counters
+       set ultimo_num = ultimo_num + 1
+     where emitter_id = p_emitter_id
+       and tipo        = p_tipo
+       and anno         = p_anno
+    returning ultimo_num into v_num;
+
+    -- la riga non esisteva ancora: creala partendo da 1.
+    -- ON CONFLICT gestisce la creazione concorrente: se un'altra chiamata la crea
+    -- nello stesso istante, questa transazione si blocca sul conflitto e incrementa
+    -- invece di fallire con una violazione di unicità.
+    if not found then
+        insert into public.billing_counters (emitter_id, tipo, anno, ultimo_num)
+        values (p_emitter_id, p_tipo, p_anno, 1)
+        on conflict (emitter_id, tipo, anno)
+        do update set ultimo_num = public.billing_counters.ultimo_num + 1
+        returning ultimo_num into v_num;
+    end if;
+
+    -- prefisso in base al tipo, letto dall'emittente
+    select case p_tipo
+             when 'preventivo'   then e.prefisso_preventivo
+             when 'fattura'      then e.prefisso_fattura
+             when 'proforma'     then e.prefisso_proforma
+             when 'nota_credito' then e.prefisso_nota
+           end
+      into v_prefisso
+      from public.emitter_settings e
+     where e.id = p_emitter_id;
+
+    if v_prefisso is null then
+        raise exception 'Emittente % non trovato o prefisso non configurato per il tipo %',
+            p_emitter_id, p_tipo
+            using errcode = 'P0002';  -- no_data_found
+    end if;
+
+    -- formato PREFISSO-NNN-ANNO (numero 3 cifre, anno 4 cifre)
+    return v_prefisso || '-' || lpad(v_num::text, 3, '0') || '-' || to_char(p_anno, 'FM0000');
+end;
+$$;
+
+grant execute on function public.prossimo_numero(uuid, text, integer) to authenticated;
+
 -- ============================================================================
 --  FINE STRATO FATTURAZIONE.
 --  Da verificare dopo l'esecuzione:
 --   - che can_bill() NON apra alcun accesso a health_records (test GDPR)
---   - la funzione di numerazione atomica (prossimo passo, sostituisce nextNum)
 -- ============================================================================
