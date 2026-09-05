@@ -3,7 +3,9 @@
 Documento di riferimento per l'integrazione di **Gestionale fatturazione**, **Calendar
 Work** e **GESPP** in un unico sistema multiutente su backend condiviso.
 
-Stato: decisioni architetturali approvate. Da qui si passa allo schema SQL.
+Stato: gestionale fatturazione migrato da localStorage a Supabase (auth,
+emittente, catalogo, clienti, documenti/fatture, generazione XML). Vedi
+sezione 7 per le lezioni riusabili quando si affronterà il prossimo dominio.
 
 ---
 
@@ -167,12 +169,86 @@ l'integrazione: aprire il soggetto alla fatturazione non deve aprire crepe verso
 ## 6. Ordine di lavoro
 
 0. **[FATTO]** Decisioni architetturali (questo documento).
-1. Progettare lo schema SQL dello strato fatturazione (billing_profiles +
+1. **[FATTO]** Schema SQL dello strato fatturazione (billing_profiles +
    fatture) come estensione dello schema GESPP.
-2. Migrare il gestionale da localStorage a Supabase (sostituire storage con
-   query; logica XML invariata).
+2. **[FATTO]** Migrare il gestionale da localStorage a Supabase (storage
+   sostituito con query; logica XML invariata) — vedi sezione 7 per le
+   lezioni riusabili emerse in questo passaggio.
 3. Migrare Calendar Work da Firebase a Supabase.
 4. Portale unificato con login unico e viste per ruolo/permesso.
 
 Strumento consigliato dalla fase 1: **Claude Code** sul repository GitHub
 (più file coordinati + versionamento Git).
+
+---
+
+## 7. Lezioni dal Modulo 1 (gestionale fatturazione) per i prossimi domini
+
+Durante la migrazione del gestionale sono emersi tre pattern che vale la
+pena riusare quando si affronterà il prossimo dominio (Calendar Work o
+altro), invece di riscoprirli da capo. Sono nati da bug reali trovati in
+sessione, non da teoria.
+
+### 7.1 Policy RLS additive sulle tabelle condivise
+
+Un dominio nuovo che ha bisogno di leggere/scrivere `companies`/`persons`
+(o qualunque altra tabella non di sua proprietà, appartenente a un altro
+dominio) **non deve mai modificare le policy RLS esistenti** di quella
+tabella. Va invece aggiunta una policy nuova, scoped al proprio criterio
+di accesso (es. `can_use_emitter()`, o l'equivalente del nuovo dominio).
+
+Le policy Postgres per lo stesso comando (select/insert/update/delete) si
+combinano in **OR**: una policy aggiuntiva allarga l'accesso solo per chi
+soddisfa il suo criterio, senza mai restringere o toccare l'accesso già
+concesso dalle policy di altri domini. Verificato concretamente nel
+gestionale: `companies`/`persons` avevano già `companies_read`/
+`persons_insert` ecc. per i consulenti GESPP; sono state aggiunte
+`companies_billing_select/insert/update` e `persons_billing_*` (quest'ultime
+scoped anche a `tipo='professionista'`, per non aprire accesso ai
+`dipendente` che appartengono al dominio di profilazione aziendale) senza
+toccare una riga delle policy GESPP.
+
+**Corollario**: non aggiungere mai una policy `DELETE` per un dominio che
+non possiede il soggetto. Cancellare un'identità condivisa è un'operazione
+cross-dominio (rischia di portarsi via dati di un altro dominio collegati
+allo stesso `company_id`/`person_id`) — resta un'operazione admin via SQL
+diretto, non un bottone in nessuna delle interfacce di dominio.
+
+### 7.2 Verificare le RLS reali PRIMA di scrivere il piano, mai assumerle
+
+Due dei tre bug di sicurezza/permessi seri trovati in questa migrazione
+(su `emitter_settings` nel Modulo 1, su `companies`/`persons` nel Modulo 3)
+erano buchi RLS non documentati da nessuna parte — solo la lettura diretta
+di `pg_policies` li ha fatti emergere, non la documentazione né la sola
+lettura del codice applicativo. Prima di progettare come un nuovo dominio
+si aggancia a una tabella condivisa, query da lanciare sempre:
+
+```sql
+select tablename, policyname, cmd, qual, with_check
+from pg_policies
+where schemaname='public' and tablename in ('nome_tabella_1','nome_tabella_2');
+```
+
+Non fidarsi di "dovrebbe già funzionare perché è nello schema" — verificarlo
+impersonando un utente reale del nuovo dominio (tecnica: `set local role
+authenticated` + `request.jwt.claims`, vedi promemoria RLS del gestionale).
+
+### 7.3 Snapshot vs riferimento vivo per i dati che devono restare storici
+
+Quando un dominio produce un documento/evento che deve restare invariato
+nel tempo anche se l'anagrafica del soggetto cambia dopo (una fattura, ma
+lo stesso vale per un verbale, un referto, una prenotazione confermata),
+la tabella satellite del dominio deve contenere **entrambe** le cose:
+
+- un riferimento vivo al soggetto (`company_id`/`person_id`), utile per
+  aggregare/navigare ("tutti i documenti di questo cliente");
+- uno **snapshot** dei campi che contano al momento dell'evento (nome,
+  indirizzo, ecc.), copiati nella riga stessa — mai un JOIN live per i dati
+  mostrati/stampati.
+
+Nel gestionale: `invoices` ha sia `company_id`/`person_id` sia le colonne
+`cliente_*` (snapshot). Un JOIN live sarebbe stato più "pulito"
+relazionalmente ma avrebbe rotto la correttezza fiscale storica alla prima
+correzione di indirizzo di un cliente.
+
+---
