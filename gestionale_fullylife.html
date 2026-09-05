@@ -384,8 +384,8 @@ textarea{resize:vertical;min-height:58px}
     <div class="card-head"><div class="hl"><div class="ci">🗂️</div><div><h3>Intestazione</h3></div></div></div>
     <div class="card-body">
       <div class="grid4" style="margin-bottom:11px">
-        <div class="field"><label>Tipo</label><select id="d-tipo" onchange="if(!editId)document.getElementById('d-num').value=nextNum(this.value)"><option value="preventivo">Preventivo</option><option value="fattura">Fattura</option><option value="proforma">Proforma</option><option value="nota_credito">Nota di credito</option></select></div>
-        <div class="field"><label>Numero</label><input type="text" id="d-num"></div>
+        <div class="field"><label>Tipo</label><select id="d-tipo"><option value="preventivo">Preventivo</option><option value="fattura">Fattura</option><option value="proforma">Proforma</option><option value="nota_credito">Nota di credito</option></select></div>
+        <div class="field"><label>Numero</label><input type="text" id="d-num" readonly style="background:var(--border);cursor:not-allowed"></div>
         <div class="field"><label>Data</label><input type="date" id="d-data"></div>
         <div class="field"><label>Scadenza</label><input type="date" id="d-scad"></div>
       </div>
@@ -951,7 +951,7 @@ let profiles=[];
 let curId=null;
 let curEmitter=null;
 let docs=[],products=[],sharedProducts=[],categories=[],clients=[],settings={};
-let rows=[],editId=null,docFilter='all';
+let rows=[],editId=null,editNumero=null,editClientRef=null,editPrevRef=null,pendingPrevRef=null,docFilter='all';
 let npLogoB64=null,npLogoMime=null,npColor=0;
 let trvTimer=null;
 
@@ -1006,12 +1006,42 @@ function mapEmitterToSettings(e){
   };
 }
 function loadPD(){
-  docs=pg('docs',[]);
   settings=mapEmitterToSettings(curEmitter);
 }
 function savePD(){
-  ps('docs',docs);
   showToast();
+}
+function fromDbInvoice(row){
+  const statoUi={bozza:'bozza',emesso:'inviato',pagato:'pagato',annullato:'annullato'}[row.stato]||row.stato;
+  const righe=(row.invoice_lines||[]).slice().sort((a,b)=>a.numero_linea-b.numero_linea)
+    .map(l=>({id:l.id,desc:l.descrizione,qty:l.quantita,um:l.unita_misura,price:l.prezzo_unitario}));
+  return{
+    id:row.id,tipo:row.tipo,num:row.numero,numero:row.numero,data:row.data,scadenza:row.scadenza,
+    cliente:{nome:row.cliente_nome,piva:row.cliente_piva,email:row.cliente_email,ind:row.cliente_indirizzo,
+      cap:row.cliente_cap,comune:row.cliente_comune,prov:row.cliente_provincia,
+      codDest:row.cliente_cod_dest,pecSdi:row.cliente_pec_sdi},
+    righe,ivaRate:row.aliquota_iva,totale:row.totale,note:row.note,status:statoUi,
+    dataPagamento:row.data_pagamento,metodoPagamento:row.metodo_pagamento,archiviato:row.archiviato,
+    prevRef:row.prev_ref,clientId:row.company_id||row.person_id||null,
+    clientTipo:row.company_id?'azienda':(row.person_id?'persona':null)
+  };
+}
+async function loadDocs(){
+  const{data,error}=await supabaseClient.from('invoices').select('*, invoice_lines(*)')
+    .eq('emitter_id',curId).order('created_at',{ascending:false});
+  if(error){alert('Errore nel caricamento dei documenti: '+error.message);return;}
+  docs=(data||[]).map(fromDbInvoice);
+  renderDash();renderDocList();
+}
+// Assegna il numero definitivo SOLO alla prima transizione fuori da bozza, mai più
+// di una volta sullo stesso documento — vedi contratto d'uso di prossimo_numero()
+// in gestionale_schema.sql sezione 8.
+async function ensureNumero(numeroEsistente,tipo,data){
+  if(numeroEsistente)return numeroEsistente;
+  const anno=new Date(data).getFullYear();
+  const{data:numero,error}=await supabaseClient.rpc('prossimo_numero',{p_emitter_id:curId,p_tipo:tipo,p_anno:anno});
+  if(error){alert('Errore nell\'assegnazione del numero: '+error.message);return null;}
+  return numero;
 }
 function fromDbProduct(row){
   return{id:row.id,src_id:row.src_id,nome:row.nome,prezzo:row.prezzo,um:row.unita_misura,desc:row.descrizione,cat:row.categoria};
@@ -1045,11 +1075,11 @@ async function enterProfile(id){
   const {data,error}=await supabaseClient.from('emitter_settings').select('*').eq('id',id).single();
   if(error||!data){alert('Errore nel caricamento dell\'emittente: '+(error?error.message:'non trovato'));return;}
   curEmitter=data;curId=id;
-  loadPD();updateSB();loadCatalog();loadClients();
+  loadPD();updateSB();loadCatalog();loadClients();loadDocs();
   showScreen('app-shell');
   document.getElementById('d-data').value=new Date().toISOString().split('T')[0];
-  document.getElementById('d-num').value=nextNum('preventivo');
-  rows=[];editId=null;renderRows();
+  document.getElementById('d-num').value='Assegnato all\'emissione';
+  rows=[];editId=null;editNumero=null;editPrevRef=null;editClientRef=null;renderRows();
   loadTravel();goTo('home');
 }
 function switchProfile(){
@@ -1276,7 +1306,7 @@ function renderDash(){
     barDiv.insertAdjacentElement('afterend', alertDiv);
   }
 
-  const rec=docs.slice(0,5);
+  const rec=docs.filter(d=>!d.archiviato).slice(0,5);
   document.getElementById('dash-recent').innerHTML=rec.length?rec.map(diHTML).join(''):'<p class="empty"><div class="ei">📄</div>Nessun documento. Crea il tuo primo!</p>';
 }
 
@@ -1290,7 +1320,7 @@ function diHTML(d){
 
   // Documenti archiviati: vista semplificata con ripristina
   if(d.archiviato){
-    return`<div class="doc-item" onclick="editDoc(${d.id})" style="opacity:.7">
+    return`<div class="doc-item" onclick="editDoc('${d.id}')" style="opacity:.7">
       <span class="di-num">${d.num}${ref}</span>
       <span class="di-cli">${d.cliente?.nome||'—'}</span>
       <span class="di-date">${fmtDateIT(d.data)}</span>
@@ -1298,24 +1328,24 @@ function diHTML(d){
       <span class="badge" style="background:#E2DDD8;color:#666">📁 archiviato</span>
       <span class="di-tot" style="${totStyle}">${fe(d.totale||0)}</span>
       <div class="di-act">
-        <button class="btn btn-sm" onclick="prtDoc(${d.id},event)">PDF</button>
-        <button class="btn btn-sm btn-accent" onclick="ripristinaDoc(${d.id},event)" title="Riporta tra i documenti attivi">↺ Ripristina</button>
-        <button class="btn btn-sm btn-danger" onclick="delDoc(${d.id},event)">✕</button>
+        <button class="btn btn-sm" onclick="prtDoc('${d.id}',event)">PDF</button>
+        <button class="btn btn-sm btn-accent" onclick="ripristinaDoc('${d.id}',event)" title="Riporta tra i documenti attivi">↺ Ripristina</button>
+        <button class="btn btn-sm btn-danger" onclick="delDoc('${d.id}',event)">✕</button>
       </div>
     </div>`;
   }
 
-  const xmlBtn=d.tipo==='fattura'?`<button class="btn btn-sm" style="color:var(--amber);border-color:#F0C070" onclick="genXML(${d.id},event)" title="XML FatturaPA">XML</button>`:'';
+  const xmlBtn=d.tipo==='fattura'?`<button class="btn btn-sm" style="color:var(--amber);border-color:#F0C070" onclick="genXML('${d.id}',event)" title="XML FatturaPA">XML</button>`:'';
   const convBtn=d.tipo==='preventivo'
-    ?`<button class="btn btn-sm btn-accent" onclick="convDoc(${d.id},'proforma',event)">→ Proforma</button>`
+    ?`<button class="btn btn-sm btn-accent" onclick="convDoc('${d.id}','proforma',event)">→ Proforma</button>`
     :d.tipo==='proforma'
-    ?`<button class="btn btn-sm btn-green" onclick="convDoc(${d.id},'fattura',event)">→ Fattura</button>`
+    ?`<button class="btn btn-sm btn-green" onclick="convDoc('${d.id}','fattura',event)">→ Fattura</button>`
     :'';
   const sollecitoBtn=d.tipo==='proforma'&&d.status!=='pagato'
-    ?`<button class="btn btn-sm" style="color:var(--amber)" onclick="openSollecito(${d.id},event)">Sollecito</button>`:'';
+    ?`<button class="btn btn-sm" style="color:var(--amber)" onclick="openSollecito('${d.id}',event)">Sollecito</button>`:'';
   const ncBtn=d.tipo==='fattura'
-    ?`<button class="btn btn-sm" style="color:var(--ink-2)" onclick="creaNotaCredito(${d.id},event)" title="Crea nota di credito">NC</button>`:'';
-  return`<div class="doc-item" onclick="editDoc(${d.id})">
+    ?`<button class="btn btn-sm" style="color:var(--ink-2)" onclick="creaNotaCredito('${d.id}',event)" title="Crea nota di credito">NC</button>`:'';
+  return`<div class="doc-item" onclick="editDoc('${d.id}')">
     <span class="di-num">${d.num}${ref}</span>
     <span class="di-cli">${d.cliente?.nome||'—'}</span>
     <span class="di-date">${fmtDateIT(d.data)}</span>
@@ -1323,24 +1353,26 @@ function diHTML(d){
     <span class="badge ${bS}">${d.status}</span>
     <span class="di-tot" style="${totStyle}">${fe(d.totale||0)}</span>
     <div class="di-act">
-      ${d.status!=='pagato'&&d.tipo!=='nota_credito'?`<button class="btn btn-sm btn-green" onclick="markPaid(${d.id},event)">✓ Pagato</button>`:''}
-      <button class="btn btn-sm" onclick="prtDoc(${d.id},event)">PDF</button>
+      ${d.status!=='pagato'&&d.tipo!=='nota_credito'?`<button class="btn btn-sm btn-green" onclick="markPaid('${d.id}',event)">✓ Pagato</button>`:''}
+      <button class="btn btn-sm" onclick="prtDoc('${d.id}',event)">PDF</button>
       ${xmlBtn}${convBtn}${sollecitoBtn}${ncBtn}
-      <button class="btn btn-sm" style="color:var(--ink-2)" onclick="archiviaDoc(${d.id},event)" title="Archivia">📁</button>
-      <button class="btn btn-sm btn-danger" onclick="delDoc(${d.id},event)">✕</button>
+      <button class="btn btn-sm" style="color:var(--ink-2)" onclick="archiviaDoc('${d.id}',event)" title="Archivia">📁</button>
+      <button class="btn btn-sm btn-danger" onclick="delDoc('${d.id}',event)">✕</button>
     </div>
   </div>`;
 }
-function archiviaDoc(id,e){
+async function archiviaDoc(id,e){
   e&&e.stopPropagation();
-  const d=docs.find(x=>x.id===id);if(!d)return;
-  d.archiviato=true;savePD();renderDocList();
+  const{error}=await supabaseClient.from('invoices').update({archiviato:true}).eq('id',id);
+  if(error){alert('Errore: '+error.message);return;}
+  await loadDocs();
   showMsg('Documento archiviato','ok');
 }
-function ripristinaDoc(id,e){
+async function ripristinaDoc(id,e){
   e&&e.stopPropagation();
-  const d=docs.find(x=>x.id===id);if(!d)return;
-  d.archiviato=false;savePD();renderDocList();
+  const{error}=await supabaseClient.from('invoices').update({archiviato:false}).eq('id',id);
+  if(error){alert('Errore: '+error.message);return;}
+  await loadDocs();
   showMsg('Documento ripristinato','ok');
 }
 function renderDocList(){
@@ -1358,51 +1390,53 @@ function renderDocList(){
   document.getElementById('doc-list-full').innerHTML=l.length?l.map(diHTML).join(''):'<p class="empty"><div class="ei">📄</div>Nessun documento.</p>';
 }
 function setFilter(f,b){docFilter=f;document.querySelectorAll('.fb').forEach(x=>x.classList.remove('active'));b.classList.add('active');renderDocList();}
-function markPaid(id,e){
+async function markPaid(id,e){
   e&&e.stopPropagation();
   const d=docs.find(x=>x.id===id);if(!d)return;
-  d.status='pagato';
-  d.dataPagamento=d.dataPagamento||new Date().toISOString().slice(0,10);
-  d.metodoPagamento=d.metodoPagamento||'Bonifico bancario';
-  savePD();renderDocList();renderDash();
+  const numero=await ensureNumero(d.numero,d.tipo,d.data);
+  if(!numero)return; // errore già mostrato da ensureNumero
+  const{error}=await supabaseClient.from('invoices').update({
+    stato:'pagato',pagato:true,numero,
+    data_pagamento:d.dataPagamento||new Date().toISOString().slice(0,10),
+    metodo_pagamento:d.metodoPagamento||'Bonifico bancario'
+  }).eq('id',id);
+  if(error){alert('Errore: '+error.message);return;}
+  await loadDocs();
 }
-function delDoc(id,e){e&&e.stopPropagation();if(!confirm('Eliminare?'))return;docs=docs.filter(d=>d.id!==id);savePD();renderDocList();renderDash();}
+async function delDoc(id,e){
+  e&&e.stopPropagation();if(!confirm('Eliminare?'))return;
+  const{error}=await supabaseClient.from('invoices').delete().eq('id',id);
+  if(error){alert('Errore nell\'eliminazione: '+error.message);return;}
+  await loadDocs();
+}
 
-// ══ NUMBERING ══
-function nextNum(t){
-  const prefMap={preventivo:settings.prefPrev||'PREV',fattura:settings.prefFatt||'FATT',proforma:settings.prefProforma||'PRF',nota_credito:'NC'};
-  const pr=prefMap[t]||'DOC';
-  const an=settings.anno||new Date().getFullYear();
-  const nums=docs.filter(d=>d.tipo===t).map(d=>{const m=d.num.match(/-(\d+)-\d{4}$/);return m?parseInt(m[1]):0});
-  return`${pr}-${(Math.max(0,...nums)+1).toString().padStart(3,'0')}-${an}`;
-}
 
 // ══ NEW DOC ══
 function resetDoc(){
-  editId=null;rows=[];
+  editId=null;editNumero=null;editPrevRef=null;editClientRef=null;pendingPrevRef=null;rows=[];
   document.getElementById('form-title').textContent='Nuovo documento';
   document.getElementById('d-tipo').value='preventivo';
-  document.getElementById('d-num').value=nextNum('preventivo');
+  document.getElementById('d-num').value='Assegnato all\'emissione';
   document.getElementById('d-data').value=new Date().toISOString().split('T')[0];
   ['d-scad','d-cnome','d-cpiva','d-cemail','d-cind','d-ccap','d-ccomune','d-cprov','d-ccoddest','d-cpec','d-note'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('iva-r').value='22';document.getElementById('d-svc').checked=false;renderRows();
 }
-function addRow(p){rows.push({id:Date.now(),desc:p?p.nome:'',qty:1,um:p?p.um:'ora',price:p?p.prezzo:0});renderRows();}
+function addRow(p){rows.push({id:String(Date.now()),desc:p?p.nome:'',qty:1,um:p?p.um:'ora',price:p?p.prezzo:0});renderRows();}
 function renderRows(){
   const c=document.getElementById('rows-c');
   if(!rows.length){c.innerHTML='<p style="font-size:.79rem;color:var(--ink-3);margin-bottom:7px">Nessuna voce — usa i pulsanti qui sopra.</p>';calcTots();return;}
   c.innerHTML=rows.map(r=>`
     <div class="row-ed" data-id="${r.id}">
       <div class="row-ed-top">
-        <input type="text" class="desc" value="${r.desc}" oninput="upRow(${r.id},'desc',this.value)" placeholder="Descrizione servizio">
-        <button class="btn btn-sm btn-danger" onclick="rmRow(${r.id})">✕</button>
+        <input type="text" class="desc" value="${r.desc}" oninput="upRow('${r.id}','desc',this.value)" placeholder="Descrizione servizio">
+        <button class="btn btn-sm btn-danger" onclick="rmRow('${r.id}')">✕</button>
       </div>
       <div class="row-ed-bot">
-        <input type="number" class="qty" min="0" step="1" value="${r.qty}" oninput="upRow(${r.id},'qty',this.value)" placeholder="Qtà">
-        <input type="text" class="um" value="${r.um}" oninput="upRow(${r.id},'um',this.value)" placeholder="U.M.">
+        <input type="number" class="qty" min="0" step="1" value="${r.qty}" oninput="upRow('${r.id}','qty',this.value)" placeholder="Qtà">
+        <input type="text" class="um" value="${r.um}" oninput="upRow('${r.id}','um',this.value)" placeholder="U.M.">
         <div style="display:flex;align-items:center;gap:0;flex-shrink:0">
           <span style="padding:0 6px 0 8px;font-size:.85rem;color:var(--ink-2);background:var(--border);border:1.5px solid var(--border);border-right:none;border-radius:var(--r8) 0 0 var(--r8);height:34px;display:flex;align-items:center;line-height:1">€</span>
-          <input type="number" class="pz" min="0" step="0.01" value="${r.price}" oninput="upRow(${r.id},'price',this.value)" placeholder="0,00" style="border-radius:0 var(--r8) var(--r8) 0;border-left:none">
+          <input type="number" class="pz" min="0" step="0.01" value="${r.price}" oninput="upRow('${r.id}','price',this.value)" placeholder="0,00" style="border-radius:0 var(--r8) var(--r8) 0;border-left:none">
         </div>
         <span class="tot">${fe(r.qty*r.price)}</span>
       </div>
@@ -1417,27 +1451,77 @@ function calcTots(){
   document.getElementById('tn').textContent=fe(n);document.getElementById('ti').textContent=fe(iv);document.getElementById('tg').textContent=fe(n+iv);
 }
 async function saveDoc(status){
-  const num=document.getElementById('d-num').value.trim(),cn=document.getElementById('d-cnome').value.trim();
-  if(!num){alert('Inserisci il numero documento.');return;}
+  const cn=document.getElementById('d-cnome').value.trim();
+  const tipo=document.getElementById('d-tipo').value;
+  const data=document.getElementById('d-data').value;
+  if(!data){alert('Inserisci la data del documento.');return;}
   const n=rows.reduce((s,r)=>s+r.qty*r.price,0),rt=parseFloat(document.getElementById('iva-r').value)||0;
-  const doc={id:editId||Date.now(),tipo:document.getElementById('d-tipo').value,num,data:document.getElementById('d-data').value,scadenza:document.getElementById('d-scad').value,
-    cliente:{nome:cn,piva:document.getElementById('d-cpiva').value,email:document.getElementById('d-cemail').value,ind:document.getElementById('d-cind').value,
-      cap:document.getElementById('d-ccap').value,comune:document.getElementById('d-ccomune').value,prov:document.getElementById('d-cprov').value.toUpperCase(),
-      codDest:document.getElementById('d-ccoddest').value.trim().replace(/\s/g,'').toUpperCase(),pecSdi:document.getElementById('d-cpec').value.trim()},
-    righe:[...rows],ivaRate:rt,totale:parseFloat((n*(1+rt/100)).toFixed(2)),note:document.getElementById('d-note').value,status};
-  if(editId){const i=docs.findIndex(d=>d.id===editId);if(i>=0)docs[i]=doc;}else docs.unshift(doc);
+  const statoDb={bozza:'bozza',inviato:'emesso',pagato:'pagato'}[status]||status;
+
+  let numero=editNumero;
+  if(statoDb!=='bozza'){
+    numero=await ensureNumero(editNumero,tipo,data);
+    if(!numero)return; // errore già mostrato da ensureNumero
+  }
+
+  const cliente={nome:cn,piva:document.getElementById('d-cpiva').value,email:document.getElementById('d-cemail').value,
+    ind:document.getElementById('d-cind').value,cap:document.getElementById('d-ccap').value,
+    comune:document.getElementById('d-ccomune').value,prov:document.getElementById('d-cprov').value.toUpperCase(),
+    codDest:document.getElementById('d-ccoddest').value.trim().replace(/\s/g,'').toUpperCase(),
+    pecSdi:document.getElementById('d-cpec').value.trim()};
+
+  const payload={
+    emitter_id:curId,tipo,numero,data,scadenza:document.getElementById('d-scad').value||null,
+    aliquota_iva:rt,imponibile:n,imposta:parseFloat((n*rt/100).toFixed(2)),
+    totale:parseFloat((n*(1+rt/100)).toFixed(2)),note:document.getElementById('d-note').value||null,
+    stato:statoDb,pagato:statoDb==='pagato',
+    cliente_nome:cliente.nome||null,cliente_piva:cliente.piva||null,cliente_email:cliente.email||null,
+    cliente_indirizzo:cliente.ind||null,cliente_cap:cliente.cap||null,cliente_comune:cliente.comune||null,
+    cliente_provincia:cliente.prov||null,cliente_cod_dest:cliente.codDest||null,cliente_pec_sdi:cliente.pecSdi||null,
+    company_id:editClientRef?.tipo==='azienda'?editClientRef.id:null,
+    person_id:editClientRef?.tipo==='persona'?editClientRef.id:null,
+    prev_ref:editId?editPrevRef:(pendingPrevRef||null)
+  };
+
+  let invoiceId=editId;
+  if(invoiceId){
+    const{error}=await supabaseClient.from('invoices').update(payload).eq('id',invoiceId);
+    if(error){alert('Errore nel salvataggio del documento: '+error.message);return;}
+  } else {
+    const{data:inserted,error}=await supabaseClient.from('invoices').insert(payload).select().single();
+    if(error){alert('Errore nel salvataggio del documento: '+error.message);return;}
+    invoiceId=inserted.id;
+  }
+
+  // Sostituzione integrale delle righe: più semplice e robusto di un diff
+  // incrementale per un numero di voci tipicamente piccolo.
+  const{error:delErr}=await supabaseClient.from('invoice_lines').delete().eq('invoice_id',invoiceId);
+  if(delErr){alert('Errore nel salvataggio delle righe: '+delErr.message);return;}
+  if(rows.length){
+    const linePayload=rows.map((r,i)=>({invoice_id:invoiceId,numero_linea:i+1,descrizione:r.desc,
+      quantita:r.qty,unita_misura:r.um,prezzo_unitario:r.price,prezzo_totale:r.qty*r.price}));
+    const{error:linesErr}=await supabaseClient.from('invoice_lines').insert(linePayload);
+    if(linesErr){alert('Errore nel salvataggio delle righe: '+linesErr.message);return;}
+  }
+
   if(document.getElementById('d-svc').checked&&cn&&!clients.find(c=>c.nome===cn)){
     // Il form documento non distingue azienda/persona: un cliente salvato da qui è sempre
     // un'azienda. Per un cliente-persona va creato/modificato dall'anagrafica clienti.
-    await upsertClientAzienda(null,{nome:cn,...doc.cliente});
+    await upsertClientAzienda(null,{nome:cn,...cliente});
     await loadClients();
   }
-  savePD();resetDoc();goTo('documenti');
+
+  pendingPrevRef=null;
+  await loadDocs();resetDoc();goTo('documenti');
 }
 function editDoc(id){
-  const d=docs.find(x=>x.id===id);if(!d)return;editId=id;rows=[...(d.righe||[])];
+  const d=docs.find(x=>x.id===id);if(!d)return;
+  editId=id;editNumero=d.numero||null;editPrevRef=d.prevRef||null;
+  editClientRef=(d.clientId&&d.clientTipo)?{id:d.clientId,tipo:d.clientTipo}:null;
+  rows=[...(d.righe||[])];
   document.getElementById('form-title').textContent='Modifica documento';
-  document.getElementById('d-tipo').value=d.tipo;document.getElementById('d-num').value=d.num;
+  document.getElementById('d-tipo').value=d.tipo;
+  document.getElementById('d-num').value=d.numero||'Assegnato all\'emissione';
   document.getElementById('d-data').value=d.data||'';document.getElementById('d-scad').value=d.scadenza||'';
   document.getElementById('d-cnome').value=d.cliente?.nome||'';document.getElementById('d-cpiva').value=d.cliente?.piva||'';
   document.getElementById('d-cemail').value=d.cliente?.email||'';document.getElementById('d-cind').value=d.cliente?.ind||'';
@@ -1784,6 +1868,7 @@ function useClient(id,tipo){
   document.getElementById('d-ccap').value=c.cap||'';document.getElementById('d-ccomune').value=c.comune||'';
   document.getElementById('d-cprov').value=c.prov||'';
   document.getElementById('d-ccoddest').value=c.codDest||'';document.getElementById('d-cpec').value=c.pecSdi||'';
+  editClientRef={id,tipo};
   closeOv('cli');goTo('nuovo');
 }
 
@@ -2055,27 +2140,32 @@ function genTravelPDF(){
 }
 
 // ══ CONVERTI DOCUMENTO: preventivo→proforma, proforma→fattura ══
-function convDoc(id, targetTipo, e){
+async function convDoc(id, targetTipo, e){
   e&&e.stopPropagation();
   const d=docs.find(x=>x.id===id);if(!d)return;
-  const newNum=nextNum(targetTipo);
-  const newDoc={
-    ...JSON.parse(JSON.stringify(d)),
-    id:Date.now(),
-    tipo:targetTipo,
-    num:newNum,
-    data:new Date().toISOString().slice(0,10),
-    status:'bozza',
-    prevRef:d.num,
-    archiviato:false
-  };
-  // Archivia il documento di origine
-  d.archiviato=true;
-  docs.unshift(newDoc);
-  savePD();
-  editDoc(newDoc.id);
+  // Il nuovo documento viene creato dal form (Salva bozza/inviato/pagato assegnerà
+  // il numero al momento giusto, mai qui): non inseriamo direttamente in docs con
+  // un id/numero fittizi, altrimenti si assegnerebbe un numero a una bozza.
+  const{error}=await supabaseClient.from('invoices').update({archiviato:true}).eq('id',id);
+  if(error){alert('Errore nell\'archiviazione del documento originale: '+error.message);return;}
+  resetDoc();
+  document.getElementById('d-tipo').value=targetTipo;
+  document.getElementById('d-data').value=new Date().toISOString().slice(0,10);
+  document.getElementById('d-cnome').value=d.cliente?.nome||'';document.getElementById('d-cpiva').value=d.cliente?.piva||'';
+  document.getElementById('d-cemail').value=d.cliente?.email||'';document.getElementById('d-cind').value=d.cliente?.ind||'';
+  document.getElementById('d-ccap').value=d.cliente?.cap||'';document.getElementById('d-ccomune').value=d.cliente?.comune||'';
+  document.getElementById('d-cprov').value=d.cliente?.prov||'';
+  document.getElementById('d-ccoddest').value=d.cliente?.codDest||'';document.getElementById('d-cpec').value=d.cliente?.pecSdi||'';
+  document.getElementById('iva-r').value=d.ivaRate??22;
+  rows=(d.righe||[]).map(r=>({...r,id:String(Date.now()+Math.random())}));
+  renderRows();
+  pendingPrevRef=d.num;
+  editClientRef=(d.clientId&&d.clientTipo)?{id:d.clientId,tipo:d.clientTipo}:null;
   const toLabel=targetTipo==='proforma'?'proforma':'fattura';
-  showMsg('✓ Creata '+toLabel+' '+newNum+' — originale archiviato','ok');
+  document.getElementById('form-title').textContent=`Nuovo ${toLabel} da ${d.num}`;
+  await loadDocs(); // aggiorna la lista con l'originale ora archiviato
+  goTo('nuovo');
+  showMsg('✓ Originale archiviato. Compila e salva il nuovo '+toLabel+'.','ok');
 }
 
 // ══ TRASFERISCI SPESE VIAGGIO IN DOCUMENTO ══
@@ -2104,7 +2194,7 @@ function transferToDoc(){
   const openDocs=docs.filter(d=>d.status!=='pagato');
   list.innerHTML=openDocs.length
     ?openDocs.map(d=>`
-      <div class="doc-item" onclick="transferToExisting(${d.id})" style="cursor:pointer">
+      <div class="doc-item" onclick="transferToExisting('${d.id}')" style="cursor:pointer">
         <span class="di-num">${d.num}</span>
         <span class="di-cli">${d.cliente?.nome||'—'}</span>
         <span class="badge ${d.tipo==='preventivo'?'bp':'bf'}">${d.tipo}</span>
@@ -2119,7 +2209,7 @@ function transferToExisting(id){
   const tot=travelTotal();
   const desc=travelDesc();
   d.righe=d.righe||[];
-  d.righe.push({id:Date.now(),desc,qty:1,um:'forfait',price:tot});
+  d.righe.push({id:String(Date.now()),desc,qty:1,um:'forfait',price:tot});
   // Ricalcola totale
   const netto=d.righe.reduce((s,r)=>s+r.qty*r.price,0);
   d.totale=parseFloat((netto*(1+(d.ivaRate||0)/100)).toFixed(2));
@@ -2137,7 +2227,7 @@ function transferToNewDoc(){
   // Pre-popola cliente dal campo trasferta se disponibile
   const cli=document.getElementById('t-cli').value;
   if(cli) document.getElementById('d-cnome').value=cli;
-  rows=[{id:Date.now(),desc,qty:1,um:'forfait',price:tot}];
+  rows=[{id:String(Date.now()),desc,qty:1,um:'forfait',price:tot}];
   renderRows();
   document.getElementById('form-title').textContent='Nuovo documento (spese trasferta)';
   goTo('nuovo');
@@ -2170,6 +2260,9 @@ function fmtAmt(v){return Number(v).toFixed(2);}
 async function genXML(id,e){
   e&&e.stopPropagation();
   const d=docs.find(x=>x.id===id);if(!d||d.tipo!=='fattura'){alert('Disponibile solo per le fatture.');return;}
+  // Con la numerazione atomica (Modulo 4) una fattura in bozza non ha ancora un
+  // numero: generare l'XML richiede prima l'emissione (Salva & inviato/pagato).
+  if(!d.num){alert('Questa fattura è ancora in bozza: emettila prima di generare l\'XML.');return;}
 
   const s=settings;
 
@@ -2654,7 +2747,7 @@ function renderFinanze(){
   // Registro incassi = fatture definitive (la fattura si emette a pagamento avvenuto)
   const pagati=docs.filter(d=>d.tipo==='fattura'&&!d.archiviato).sort((a,b)=>(b.dataPagamento||b.data||'').localeCompare(a.dataPagamento||a.data||''));
   document.getElementById('incassi-list').innerHTML=pagati.length?pagati.map(d=>`
-    <div class="doc-item" onclick="editDoc(${d.id})" style="cursor:default">
+    <div class="doc-item" onclick="editDoc('${d.id}')" style="cursor:default">
       <span class="di-num">${d.num}</span>
       <span class="di-cli">${d.cliente?.nome||'—'}</span>
       <span class="di-date">${fmtDateIT(d.dataPagamento||d.data)}</span>
@@ -2662,20 +2755,21 @@ function renderFinanze(){
       <span class="di-tot">${fe(d.totale||0)}</span>
       <span style="font-size:.75rem;color:var(--ink-2)">${d.metodoPagamento||'—'}</span>
       <div class="di-act">
-        <button class="btn btn-sm" onclick="editIncasso(${d.id},event)">✏️ Data/metodo</button>
+        <button class="btn btn-sm" onclick="editIncasso('${d.id}',event)">✏️ Data/metodo</button>
       </div>
     </div>`).join(''):'<p class="empty"><div class="ei">💳</div>Nessun incasso registrato.</p>';
 }
 
-function editIncasso(id,e){
+async function editIncasso(id,e){
   e&&e.stopPropagation();
   const d=docs.find(x=>x.id===id);if(!d)return;
   const data=prompt('Data pagamento (YYYY-MM-DD):',d.dataPagamento||d.data||'');
   if(data===null)return;
   const metodo=prompt('Metodo pagamento:',d.metodoPagamento||'Bonifico bancario');
   if(metodo===null)return;
-  d.dataPagamento=data;d.metodoPagamento=metodo;
-  savePD();renderFinanze();
+  const{error}=await supabaseClient.from('invoices').update({data_pagamento:data,metodo_pagamento:metodo}).eq('id',id);
+  if(error){alert('Errore: '+error.message);return;}
+  await loadDocs();renderFinanze();
 }
 
 function exportIncassiCSV(){
@@ -2703,15 +2797,15 @@ function renderScadenzario(){
     const isScaduto=diff<0;const isUrgente=diff>=0&&diff<=7;
     const alertColor=isScaduto?'var(--red)':isUrgente?'var(--amber)':'var(--green)';
     const alertLabel=isScaduto?`Scaduto da ${Math.abs(diff)} gg`:isUrgente?`Scade tra ${diff} gg`:`Scade tra ${diff} gg`;
-    return`<div class="doc-item" onclick="editDoc(${d.id})">
+    return`<div class="doc-item" onclick="editDoc('${d.id}')">
       <span class="di-num">${d.num}</span>
       <span class="di-cli">${d.cliente?.nome||'—'}</span>
       <span class="badge ${d.tipo==='preventivo'?'bp':d.tipo==='proforma'?'bprf':'bf'}">${d.tipo}</span>
       <span class="di-tot">${fe(d.totale||0)}</span>
       <span style="font-size:.75rem;font-weight:600;color:${alertColor};white-space:nowrap">${alertLabel}</span>
       <div class="di-act">
-        ${d.status!=='pagato'?`<button class="btn btn-sm btn-green" onclick="markPaid(${d.id},event)">✓ Pagato</button>`:''}
-        ${d.tipo==='proforma'?`<button class="btn btn-sm" onclick="openSollecito(${d.id},event)">Sollecito</button>`:''}
+        ${d.status!=='pagato'?`<button class="btn btn-sm btn-green" onclick="markPaid('${d.id}',event)">✓ Pagato</button>`:''}
+        ${d.tipo==='proforma'?`<button class="btn btn-sm" onclick="openSollecito('${d.id}',event)">Sollecito</button>`:''}
       </div>
     </div>`;
   }).join('');
@@ -2751,22 +2845,32 @@ function creaNotaCredito(id,e){
   e&&e.stopPropagation();
   const d=docs.find(x=>x.id===id);if(!d||d.tipo!=='fattura')return;
   if(!confirm(`Creare una nota di credito a storno della fattura ${d.num}?`))return;
-  const nc={
-    ...JSON.parse(JSON.stringify(d)),
-    id:Date.now(),tipo:'nota_credito',
-    num:nextNum('nota_credito'),
-    data:new Date().toISOString().slice(0,10),
-    status:'bozza',prevRef:d.num,
-    righe:d.righe.map(r=>({...r,price:-Math.abs(r.price)})),
-    totale:-Math.abs(d.totale)
-  };
-  docs.unshift(nc);savePD();editDoc(nc.id);showToast();
+  // Come convDoc: il nuovo documento passa dal form, mai un numero assegnato
+  // direttamente a una bozza creata qui.
+  resetDoc();
+  document.getElementById('d-tipo').value='nota_credito';
+  document.getElementById('d-data').value=new Date().toISOString().slice(0,10);
+  document.getElementById('d-cnome').value=d.cliente?.nome||'';document.getElementById('d-cpiva').value=d.cliente?.piva||'';
+  document.getElementById('d-cemail').value=d.cliente?.email||'';document.getElementById('d-cind').value=d.cliente?.ind||'';
+  document.getElementById('d-ccap').value=d.cliente?.cap||'';document.getElementById('d-ccomune').value=d.cliente?.comune||'';
+  document.getElementById('d-cprov').value=d.cliente?.prov||'';
+  document.getElementById('d-ccoddest').value=d.cliente?.codDest||'';document.getElementById('d-cpec').value=d.cliente?.pecSdi||'';
+  document.getElementById('iva-r').value=d.ivaRate??22;
+  rows=(d.righe||[]).map(r=>({...r,id:String(Date.now()+Math.random()),price:-Math.abs(r.price)}));
+  renderRows();
+  pendingPrevRef=d.num;
+  editClientRef=(d.clientId&&d.clientTipo)?{id:d.clientId,tipo:d.clientTipo}:null;
+  document.getElementById('form-title').textContent=`Nota di credito — storno fattura ${d.num}`;
+  goTo('nuovo');
+  showToast();
 }
 
 // ══ STORICO CLIENTE ══
 function openStorico(cliId,tipo){
   const c=clients.find(x=>x.id===cliId&&x.tipo===tipo);if(!c)return;
-  const docsCliente=docs.filter(d=>d.cliente?.nome===c.nome);
+  // Match per id+tipo quando il documento è stato creato passando da "Usa cliente";
+  // fallback per nome per i documenti compilati a mano senza passare dall'anagrafica.
+  const docsCliente=docs.filter(d=>(d.clientId&&d.clientTipo)?(d.clientId===cliId&&d.clientTipo===tipo):d.cliente?.nome===c.nome);
   const totFatt=docsCliente.filter(d=>d.tipo==='fattura').reduce((s,d)=>s+d.totale,0);
   const totPagato=docsCliente.filter(d=>d.status==='pagato').reduce((s,d)=>s+d.totale,0);
   document.getElementById('storico-title').textContent=`Storico — ${c.nome}`;

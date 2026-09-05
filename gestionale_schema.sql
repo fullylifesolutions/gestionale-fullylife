@@ -176,7 +176,11 @@ create table public.invoices (
     company_id      uuid references public.companies(id),
     person_id       uuid references public.persons(id),
     tipo            text not null check (tipo in ('preventivo','fattura','proforma','nota_credito')),
-    numero          text not null,              -- es. FATT-002-2026
+    -- numero NULL finché il documento è in bozza: prossimo_numero() va chiamata
+    -- solo alla prima emissione (vedi sezione 8), mai per salvare una bozza.
+    -- unique(emitter_id, numero) non ne risente: Postgres non considera due NULL
+    -- uguali, quindi più bozze senza numero coesistono senza conflitti.
+    numero          text,                       -- es. FATT-002-2026
     data            date not null default current_date,
     scadenza        date,
     aliquota_iva    numeric(5,2) not null default 0,
@@ -184,19 +188,42 @@ create table public.invoices (
     imposta         numeric(12,2) not null default 0,
     totale          numeric(12,2) not null default 0,
     note            text,
+    -- Snapshot del cliente al momento del salvataggio: un documento fiscale non
+    -- deve cambiare se l'indirizzo/PEC del cliente vengono corretti dopo
+    -- l'emissione. company_id/person_id restano un riferimento vivo (utile per lo
+    -- storico cliente), ma i dati mostrati/stampati vengono sempre da qui.
+    cliente_nome        text,
+    cliente_piva        text,
+    cliente_email       text,
+    cliente_indirizzo   text,
+    cliente_cap         text,
+    cliente_comune      text,
+    cliente_provincia   text,
+    cliente_cod_dest    text,
+    cliente_pec_sdi     text,
     -- stati (dal frontend: status, pagato, archiviato)
     stato           text not null default 'bozza'
                     check (stato in ('bozza','emesso','pagato','annullato')),
     pagato          boolean not null default false,
     archiviato      boolean not null default false,
+    data_pagamento    date,
+    metodo_pagamento  text,
+    -- riferimento testuale al documento di origine (conversione preventivo->
+    -- proforma->fattura, o nota di credito a storno di una fattura). Solo
+    -- etichetta mostrata nella UI/stampa: non è l'FK convertito_da sotto, che
+    -- resta prevista dallo schema per un uso relazionale futuro non ancora
+    -- implementato dal frontend.
+    prev_ref        text,
     -- tracciamento conversione (preventivo->proforma->fattura)
     convertito_da   uuid references public.invoices(id),
     created_by      uuid references public.app_users(id),
     created_at      timestamptz not null default now(),
 
+    -- Il form documento permette di digitare un cliente "al volo" senza passare
+    -- dall'anagrafica: company_id/person_id possono restare entrambi null (non
+    -- più "esattamente uno dei due" come nella prima stesura dello schema).
     constraint chk_invoice_subject check (
-        (company_id is not null and person_id is null) or
-        (company_id is null and person_id is not null)
+        not (company_id is not null and person_id is not null)
     ),
     unique (emitter_id, numero)
 );
