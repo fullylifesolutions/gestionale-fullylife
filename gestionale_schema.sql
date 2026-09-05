@@ -220,17 +220,38 @@ create table public.invoice_lines (
 create index idx_lines_invoice on public.invoice_lines(invoice_id);
 
 -- ----------------------------------------------------------------------------
--- 6. CATALOGO SERVIZI — prodotti/servizi riutilizzabili (mp_shared_products)
---    Condiviso, come nel gestionale attuale.
+-- 6. CATALOGO SERVIZI — prodotti/servizi riutilizzabili
+--    emitter_id null  = catalogo comune, condiviso tra TUTTI gli operatori
+--                        con puo_fatturare (evoluzione di mp_shared_products,
+--                        che oggi è "comune" solo per limite del localStorage).
+--    emitter_id valorizzato = catalogo personale di quell'emittente.
+--    src_id: per una riga comune generata pubblicando una riga personale,
+--            punta a quella riga personale (rispecchia il campo srcId del
+--            frontend). Permette alle due righe di divergere se modificate
+--            separatamente, come nel comportamento attuale.
 -- ----------------------------------------------------------------------------
 create table public.service_catalog (
     id              uuid primary key default gen_random_uuid(),
+    emitter_id      uuid references public.emitter_settings(id) on delete cascade,
+    src_id          uuid references public.service_catalog(id) on delete set null,
     nome            text not null,
     descrizione     text,
     prezzo          numeric(12,2) not null default 0,
     unita_misura    text default 'ora',
     categoria       text,
     created_at      timestamptz not null default now()
+);
+create index idx_catalog_emitter on public.service_catalog(emitter_id);
+
+-- ----------------------------------------------------------------------------
+-- 6b. CATEGORIE SERVIZI — mp_shared_categories, globali come il catalogo
+--     comune: usate per raggruppare/colorare le voci nel catalogo.
+-- ----------------------------------------------------------------------------
+create table public.service_categories (
+    id          uuid primary key default gen_random_uuid(),
+    nome        text not null unique,
+    colore      text,
+    created_at  timestamptz not null default now()
 );
 
 -- ----------------------------------------------------------------------------
@@ -245,6 +266,7 @@ alter table public.billing_counters enable row level security;
 alter table public.invoices         enable row level security;
 alter table public.invoice_lines    enable row level security;
 alter table public.service_catalog  enable row level security;
+alter table public.service_categories enable row level security;
 
 -- emitter_settings: creazione/eliminazione solo admin (operazioni fiscalmente
 -- sensibili, disattivate anche dalla UI); l'aggiornamento dei dati (es.
@@ -297,16 +319,30 @@ create policy lines_all on public.invoice_lines
         where i.id = invoice_lines.invoice_id and public.can_use_emitter(i.emitter_id)
     ));
 
--- service_catalog: chi fattura legge/scrive
-create policy catalog_read on public.service_catalog
-    for select using (public.can_bill());
-create policy catalog_write on public.service_catalog
+-- service_catalog: riga comune (emitter_id null) -> chiunque possa fatturare;
+--   riga personale -> solo chi può usare quell'emittente. Una sola policy
+--   per operazione: qui non serve l'asimmetria insert/update vista nel bug
+--   del Modulo 1 su emitter_settings, la creazione non è un'operazione
+--   fiscalmente sensibile come la creazione di un emittente.
+create policy catalog_all on public.service_catalog
+    for all using (
+        (emitter_id is null and public.can_bill())
+        or (emitter_id is not null and public.can_use_emitter(emitter_id))
+    )
+    with check (
+        (emitter_id is null and public.can_bill())
+        or (emitter_id is not null and public.can_use_emitter(emitter_id))
+    );
+
+-- service_categories: globali, chi fattura legge/scrive
+create policy categories_all on public.service_categories
     for all using (public.can_bill()) with check (public.can_bill());
 
 -- GRANT di base (la RLS filtra le righe)
 grant select, insert, update, delete on
     public.emitter_settings, public.operator_emitter, public.billing_profiles,
-    public.billing_counters, public.invoices, public.invoice_lines, public.service_catalog
+    public.billing_counters, public.invoices, public.invoice_lines, public.service_catalog,
+    public.service_categories
     to authenticated;
 
 -- ----------------------------------------------------------------------------

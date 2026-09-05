@@ -941,7 +941,7 @@ const supabaseClient=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY
 let profiles=[];
 let curId=null;
 let curEmitter=null;
-let docs=[],products=[],clients=[],settings={};
+let docs=[],products=[],sharedProducts=[],categories=[],clients=[],settings={};
 let rows=[],editId=null,docFilter='all';
 let npLogoB64=null,npLogoMime=null,npColor=0;
 let trvTimer=null;
@@ -998,17 +998,30 @@ function mapEmitterToSettings(e){
 }
 function loadPD(){
   docs=pg('docs',[]);
-  products=pg('products',[]);
   settings=mapEmitterToSettings(curEmitter);
   // Clienti condivisi tra tutti i profili
   try{clients=JSON.parse(localStorage.getItem('mp_shared_clients')||'[]');}catch(e){clients=[];}
 }
 function savePD(){
   ps('docs',docs);
-  ps('products',products);
   // Clienti condivisi
   localStorage.setItem('mp_shared_clients',JSON.stringify(clients));
   showToast();
+}
+function fromDbProduct(row){
+  return{id:row.id,src_id:row.src_id,nome:row.nome,prezzo:row.prezzo,um:row.unita_misura,desc:row.descrizione,cat:row.categoria};
+}
+async function loadCatalog(){
+  const [p,s,c]=await Promise.all([
+    supabaseClient.from('service_catalog').select('*').eq('emitter_id',curId).order('nome'),
+    supabaseClient.from('service_catalog').select('*').is('emitter_id',null).order('nome'),
+    supabaseClient.from('service_categories').select('*').order('nome')
+  ]);
+  if(p.error||s.error||c.error){alert('Errore nel caricamento del catalogo: '+(p.error||s.error||c.error).message);return;}
+  products=(p.data||[]).map(fromDbProduct);
+  sharedProducts=(s.data||[]).map(fromDbProduct);
+  categories=(c.data||[]).map(row=>({id:row.id,nome:row.nome,colore:row.colore}));
+  renderCatalog();renderSharedCatalog();renderCategorySettings();populateCatSelect();
 }
 
 // ══ PROFILE SCREEN ══
@@ -1027,7 +1040,7 @@ async function enterProfile(id){
   const {data,error}=await supabaseClient.from('emitter_settings').select('*').eq('id',id).single();
   if(error||!data){alert('Errore nel caricamento dell\'emittente: '+(error?error.message:'non trovato'));return;}
   curEmitter=data;curId=id;
-  loadPD();updateSB();
+  loadPD();updateSB();loadCatalog();
   showScreen('app-shell');
   document.getElementById('d-data').value=new Date().toISOString().split('T')[0];
   document.getElementById('d-num').value=nextNum('preventivo');
@@ -1428,8 +1441,9 @@ function editDoc(id){
 
 // ══ CATALOG ══
 // ══ SHARED CATALOG (localStorage key indipendente dai profili) ══
-function getShared(){try{return JSON.parse(localStorage.getItem('mp_shared_products')||'[]');}catch(e){return[];}}
-function setShared(arr){localStorage.setItem('mp_shared_products',JSON.stringify(arr));}
+function toDbProduct(data){
+  return{nome:data.nome,prezzo:data.prezzo,unita_misura:data.um,descrizione:data.desc,categoria:data.cat};
+}
 
 let editProdId=null;
 
@@ -1443,7 +1457,7 @@ function clearProdForm(){
   document.getElementById('p-form-title').textContent='Aggiungi servizio';
   editProdId=null;
 }
-function addProduct(){
+async function addProduct(){
   const n=document.getElementById('p-nome').value.trim();
   if(!n){
     const el=document.getElementById('p-nome');
@@ -1455,33 +1469,34 @@ function addProduct(){
   }
   const data={nome:n,prezzo:parseFloat(document.getElementById('p-prezzo').value)||0,um:document.getElementById('p-um').value,desc:document.getElementById('p-desc').value,cat:document.getElementById('p-cat').value};
   const addToComune=document.getElementById('p-comune').checked;
+  const payload=toDbProduct(data);
 
   if(editProdId){
-    const i=products.findIndex(p=>p.id===editProdId);
-    if(i>=0) products[i]={...products[i],...data};
-    // Se era anche nel comune, aggiorna lì
+    const {error:e1}=await supabaseClient.from('service_catalog').update(payload).eq('id',editProdId);
+    if(e1){alert('Errore nel salvataggio: '+e1.message);return;}
     if(addToComune){
-      const shared=getShared();
-      const si=shared.findIndex(p=>p.srcId===editProdId);
-      if(si>=0) shared[si]={...shared[si],...data};
-      else shared.push({id:Date.now(),srcId:editProdId,...data});
-      setShared(shared);
+      const existing=sharedProducts.find(s=>s.src_id===editProdId);
+      if(existing){
+        const {error}=await supabaseClient.from('service_catalog').update(payload).eq('id',existing.id);
+        if(error){alert('Errore nel salvataggio (comune): '+error.message);return;}
+      } else {
+        const {error}=await supabaseClient.from('service_catalog').insert({...payload,emitter_id:null,src_id:editProdId});
+        if(error){alert('Errore nel salvataggio (comune): '+error.message);return;}
+      }
     }
     editProdId=null;
     document.getElementById('p-submit-btn').textContent='Aggiungi';
     document.getElementById('p-cancel-edit').style.display='none';
     document.getElementById('p-form-title').textContent='Aggiungi servizio';
   } else {
-    const newId=Date.now();
-    products.push({id:newId,...data});
+    const {data:inserted,error:e1}=await supabaseClient.from('service_catalog').insert({...payload,emitter_id:curId}).select().single();
+    if(e1){alert('Errore nel salvataggio: '+e1.message);return;}
     if(addToComune){
-      const shared=getShared();
-      shared.push({id:newId+1,srcId:newId,...data});
-      setShared(shared);
+      const {error}=await supabaseClient.from('service_catalog').insert({...payload,emitter_id:null,src_id:inserted.id});
+      if(error){alert('Errore nel salvataggio (comune): '+error.message);return;}
     }
   }
-  savePD();
-  refreshCatalog();
+  await loadCatalog();
   clearProdForm();
 }
 
@@ -1496,9 +1511,9 @@ function renderCatalog(){
     const badge=p.cat?`<div class="pc-cat" style="${col?'background:'+col+'22;color:'+col+';border-color:'+col+'44':''}">${p.cat}</div>`:'';
     return`<div class="prod-card" style="${col?'border-left-color:'+col:''}">
       ${bar}
-      <button class="pd" onclick="delProd(${p.id},event)" title="Elimina" style="right:8px">✕</button>
-      <button class="pd" style="right:28px;font-size:12px" onclick="dupProd(${p.id},event)" title="Duplica">⧉</button>
-      <button class="pd" style="right:50px;font-size:12px" onclick="editProd(${p.id},event)" title="Modifica">✏️</button>
+      <button class="pd" onclick="delProd('${p.id}',event)" title="Elimina" style="right:8px">✕</button>
+      <button class="pd" style="right:28px;font-size:12px" onclick="dupProd('${p.id}',event)" title="Duplica">⧉</button>
+      <button class="pd" style="right:50px;font-size:12px" onclick="editProd('${p.id}',event)" title="Modifica">✏️</button>
       <div class="pc-name">${p.nome}</div>
       <div class="pc-price">${fe(p.prezzo)} / ${p.um}</div>
       ${badge}
@@ -1508,7 +1523,7 @@ function renderCatalog(){
 }
 
 function renderSharedCatalog(){
-  const shared=getShared();
+  const shared=sharedProducts;
   const c=document.getElementById('cat-shared-list');
   if(!c)return;
   c.innerHTML=shared.length?shared.map(p=>{
@@ -1517,8 +1532,8 @@ function renderSharedCatalog(){
     const badge=p.cat?`<div class="pc-cat" style="${col?'background:'+col+'22;color:'+col+';border-color:'+col+'44':''}">${p.cat}</div>`:'';
     return`<div class="prod-card" style="border-color:var(--accent-l);${col?'border-left-color:'+col:''}">
       ${bar}
-      <button class="pd" onclick="delShared(${p.id},event)" title="Elimina dal comune" style="right:8px">✕</button>
-      <button class="pd" style="right:28px;font-size:12px" onclick="importFromShared(${p.id},event)" title="Importa nel personale">⬇</button>
+      <button class="pd" onclick="delShared('${p.id}',event)" title="Elimina dal comune" style="right:8px">✕</button>
+      <button class="pd" style="right:28px;font-size:12px" onclick="importFromShared('${p.id}',event)" title="Importa nel personale">⬇</button>
       <div class="pc-name">${p.nome} <span style="font-size:.68rem;background:var(--accent-l);color:var(--accent);padding:1px 6px;border-radius:99px;font-weight:600">comune</span></div>
       <div class="pc-price">${fe(p.prezzo)} / ${p.um}</div>
       ${badge}
@@ -1527,25 +1542,24 @@ function renderSharedCatalog(){
   }).join(''):'<p class="empty" style="grid-column:1/-1"><div class="ei">🌐</div>Nessun servizio nel catalogo comune.</p>';
 }
 
-function delProd(id,e){
+async function delProd(id,e){
   e.stopPropagation();
-  products=products.filter(p=>p.id!==id);
-  savePD();
-  refreshCatalog();
+  const {error}=await supabaseClient.from('service_catalog').delete().eq('id',id);
+  if(error){alert('Errore nell\'eliminazione: '+error.message);return;}
+  await loadCatalog();
 }
-function delShared(id,e){
+async function delShared(id,e){
   e.stopPropagation();
-  setShared(getShared().filter(p=>p.id!==id));
-  renderSharedCatalog();
+  const {error}=await supabaseClient.from('service_catalog').delete().eq('id',id);
+  if(error){alert('Errore nell\'eliminazione: '+error.message);return;}
+  await loadCatalog();
 }
-function importFromShared(id,e){
+async function importFromShared(id,e){
   e.stopPropagation();
-  const p=getShared().find(x=>x.id===id);if(!p)return;
-  const copy={...p,id:Date.now(),srcId:undefined};
-  delete copy.srcId;
-  products.push(copy);
-  savePD();
-  refreshCatalog();
+  const p=sharedProducts.find(x=>x.id===id);if(!p)return;
+  const {error}=await supabaseClient.from('service_catalog').insert({...toDbProduct(p),emitter_id:curId,src_id:null});
+  if(error){alert('Errore nell\'importazione: '+error.message);return;}
+  await loadCatalog();
   showToast();
 }
 
@@ -1559,7 +1573,7 @@ function editProd(id,e){
   document.getElementById('p-desc').value=p.desc||'';
   document.getElementById('p-cat').value=p.cat||'';
   // Controlla se è già nel comune
-  const inComune=getShared().some(s=>s.srcId===id);
+  const inComune=sharedProducts.some(s=>s.src_id===id);
   document.getElementById('p-comune').checked=inComune;
   document.getElementById('p-submit-btn').textContent='Salva modifiche';
   document.getElementById('p-cancel-edit').style.display='inline-flex';
@@ -1567,13 +1581,12 @@ function editProd(id,e){
   document.getElementById('p-nome').focus();
   document.getElementById('p-nome').scrollIntoView({behavior:'smooth',block:'center'});
 }
-function dupProd(id,e){
+async function dupProd(id,e){
   e.stopPropagation();
   const p=products.find(x=>x.id===id);if(!p)return;
-  const copy={...p,id:Date.now(),nome:p.nome+' (copia)'};
-  products.push(copy);
-  savePD();
-  refreshCatalog();
+  const {data:copy,error}=await supabaseClient.from('service_catalog').insert({...toDbProduct(p),nome:p.nome+' (copia)',emitter_id:curId}).select().single();
+  if(error){alert('Errore nella duplicazione: '+error.message);return;}
+  await loadCatalog();
   editProd(copy.id,{stopPropagation:()=>{}});
 }
 
@@ -1660,14 +1673,13 @@ function useClient(id){
 
 // ══ PICKERS ══
 function openProdPicker(){
-  const shared=getShared();
-  if(!products.length&&!shared.length){showToast();return;}
+  if(!products.length&&!sharedProducts.length){showToast();return;}
   renderProdPicker('');
   document.getElementById('ov-prod').classList.add('open');
 }
 function renderProdPicker(filterCat){
-  const shared=getShared();
-  const cats=getCategories();
+  const shared=sharedProducts;
+  const cats=categories;
   const allProds=products.filter(p=>!filterCat||p.cat===filterCat);
   const allShared=shared.filter(p=>!filterCat||p.cat===filterCat);
 
@@ -1681,7 +1693,7 @@ function renderProdPicker(filterCat){
     <p style="font-size:.7rem;font-weight:600;color:var(--ink-2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Personale</p>
     ${allProds.map(p=>{
       const col=getCatColor(p.cat);
-      return`<div class="prod-card" style="margin-bottom:6px;${col?'border-left:3px solid '+col:''}cursor:pointer" onclick="addFromPk(${p.id},'personal')">
+      return`<div class="prod-card" style="margin-bottom:6px;${col?'border-left:3px solid '+col:''}cursor:pointer" onclick="addFromPk('${p.id}','personal')">
         <div class="pc-name">${p.nome}${p.cat?`<span style="font-size:.68rem;margin-left:5px;padding:1px 6px;border-radius:99px;background:${col||'var(--border)'}22;color:${col||'var(--ink-2)'}">${p.cat}</span>`:''}</div>
         <div class="pc-price">${fe(p.prezzo)} / ${p.um}</div>
       </div>`;
@@ -1690,7 +1702,7 @@ function renderProdPicker(filterCat){
     <p style="font-size:.7rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:.06em;margin:${allProds.length?'12px':'0'} 0 6px">🌐 Catalogo comune</p>
     ${allShared.map(p=>{
       const col=getCatColor(p.cat);
-      return`<div class="prod-card" style="margin-bottom:6px;border-color:var(--accent-l);${col?'border-left:3px solid '+col+'':''}cursor:pointer" onclick="addFromPk(${p.id},'shared')">
+      return`<div class="prod-card" style="margin-bottom:6px;border-color:var(--accent-l);${col?'border-left:3px solid '+col+'':''}cursor:pointer" onclick="addFromPk('${p.id}','shared')">
         <div class="pc-name">${p.nome}<span style="font-size:.68rem;background:var(--accent-l);color:var(--accent);padding:1px 6px;border-radius:99px;margin-left:5px">comune</span>${p.cat?`<span style="font-size:.68rem;margin-left:4px;padding:1px 6px;border-radius:99px;background:${col||'var(--border)'}22;color:${col||'var(--ink-2)'}">${p.cat}</span>`:''}</div>
         <div class="pc-price">${fe(p.prezzo)} / ${p.um}</div>
       </div>`;
@@ -1700,7 +1712,7 @@ function renderProdPicker(filterCat){
   document.getElementById('pk-prod').innerHTML=filterBtns+personalHTML+sharedHTML+empty;
 }
 function addFromPk(id,source){
-  const list=source==='shared'?getShared():products;
+  const list=source==='shared'?sharedProducts:products;
   const p=list.find(x=>x.id===id);if(p){addRow(p);closeOv('prod');}
 }
 function openCliPicker(){
@@ -2839,46 +2851,35 @@ function selCatColor(el){
   catColor=el.dataset.col;
 }
 
-function getCategories(){
-  try{return JSON.parse(localStorage.getItem('mp_shared_categories')||'[]');}catch(e){return[];}
-}
-
-function saveCategories(cats){
-  localStorage.setItem('mp_shared_categories',JSON.stringify(cats));
-}
-
-function addCategory(){
+async function addCategory(){
   const nome=document.getElementById('cat-new-nome').value.trim();
   if(!nome)return;
-  const cats=getCategories();
-  if(cats.find(c=>c.nome===nome))return;
-  cats.push({id:Date.now(),nome,colore:catColor});
-  saveCategories(cats);
+  if(categories.find(c=>c.nome===nome))return;
+  const {error}=await supabaseClient.from('service_categories').insert({nome,colore:catColor});
+  if(error){alert('Errore nella creazione della categoria: '+error.message);return;}
   document.getElementById('cat-new-nome').value='';
-  renderCategorySettings();
-  populateCatSelect();
+  await loadCatalog();
 }
 
-function delCategory(id){
-  const cats=getCategories().filter(c=>c.id!==id);
-  saveCategories(cats);
-  renderCategorySettings();
-  populateCatSelect();
+async function delCategory(id){
+  const {error}=await supabaseClient.from('service_categories').delete().eq('id',id);
+  if(error){alert('Errore nell\'eliminazione della categoria: '+error.message);return;}
+  await loadCatalog();
 }
 
 function renderCategorySettings(){
-  const cats=getCategories();
+  const cats=categories;
   const el=document.getElementById('cat-tags-list');
   if(!el)return;
   el.innerHTML=cats.length
-    ?cats.map(c=>`<span class="cat-tag" style="background:${c.colore}">${c.nome}<button onclick="delCategory(${c.id})">✕</button></span>`).join('')
+    ?cats.map(c=>`<span class="cat-tag" style="background:${c.colore}">${c.nome}<button onclick="delCategory('${c.id}')">✕</button></span>`).join('')
     :'<p style="font-size:.8rem;color:var(--ink-3)">Nessuna categoria. Aggiungine una sopra.</p>';
 }
 
 function populateCatSelect(){
   const sel=document.getElementById('p-cat');
   if(!sel)return;
-  const cats=getCategories();
+  const cats=categories;
   const current=sel.value;
   sel.innerHTML='<option value="">— Nessuna —</option>'+cats.map(c=>`<option value="${c.nome}" data-col="${c.colore}">${c.nome}</option>`).join('');
   if(cats.find(c=>c.nome===current)) sel.value=current;
@@ -2886,7 +2887,7 @@ function populateCatSelect(){
 
 function getCatColor(nomeCat){
   if(!nomeCat)return null;
-  const cat=getCategories().find(c=>c.nome===nomeCat);
+  const cat=categories.find(c=>c.nome===nomeCat);
   return cat?cat.colore:null;
 }
 
