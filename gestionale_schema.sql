@@ -246,11 +246,19 @@ alter table public.invoices         enable row level security;
 alter table public.invoice_lines    enable row level security;
 alter table public.service_catalog  enable row level security;
 
--- emitter_settings: admin gestisce tutto; chi fattura legge
+-- emitter_settings: creazione/eliminazione solo admin (operazioni fiscalmente
+-- sensibili, disattivate anche dalla UI); l'aggiornamento dei dati (es.
+-- Impostazioni nel frontend) è invece consentito a chi può usare quell'
+-- emittente, non solo all'admin — altrimenti nessun operatore non-admin
+-- potrebbe mai modificare i propri dati fiscali.
 create policy emitter_read on public.emitter_settings
     for select using (public.can_bill() or public.is_admin());
-create policy emitter_admin_write on public.emitter_settings
-    for all using (public.is_admin()) with check (public.is_admin());
+create policy emitter_admin_insert on public.emitter_settings
+    for insert with check (public.is_admin());
+create policy emitter_admin_delete on public.emitter_settings
+    for delete using (public.is_admin());
+create policy emitter_update on public.emitter_settings
+    for update using (public.can_use_emitter(id)) with check (public.can_use_emitter(id));
 
 -- operator_emitter: l'operatore vede le proprie associazioni; solo admin le gestisce
 create policy opem_read on public.operator_emitter
@@ -395,7 +403,36 @@ $$;
 grant execute on function public.prossimo_numero(uuid, text, integer) to authenticated;
 
 -- ============================================================================
+-- 9. MODULO 1 FRONTEND — colonne aggiuntive emittente + RPC di selezione
+--    Supporto per lo switch da "profilo" locale (mp_profiles) a scelta
+--    dell'emittente Supabase-backed nel frontend.
+-- ----------------------------------------------------------------------------
+alter table public.emitter_settings
+    add column if not exists acconto     numeric(5,2) default 0,
+    add column if not exists role_label  text,
+    add column if not exists color_index integer default 0;
+
+-- Restituisce solo gli emittenti che l'utente corrente può usare.
+-- security invoker (non definer) di proposito: la RLS su emitter_settings
+-- resta attiva come seconda linea di difesa, coerente con prossimo_numero().
+create or replace function public.emittenti_disponibili()
+returns setof public.emitter_settings
+language sql stable security invoker set search_path = public
+as $$
+    select e.* from public.emitter_settings e
+    where public.can_use_emitter(e.id);
+$$;
+grant execute on function public.emittenti_disponibili() to authenticated;
+
+-- ============================================================================
 --  FINE STRATO FATTURAZIONE.
---  Da verificare dopo l'esecuzione:
---   - che can_bill() NON apra alcun accesso a health_records (test GDPR)
+--
+--  Verificato:
+--   - prossimo_numero(): atomicità sotto concorrenza (test SQL Editor a due
+--     sessioni, vedi memoria progetto).
+--   - Isolamento GDPR: un utente consulente_limitato + puo_fatturare=true
+--     legge 0 righe su spp_profiles/health_consents/health_records/
+--     self_reports/meetings (verificato con controllo di contrasto positivo
+--     su emitter_settings/can_bill() per escludere falsi positivi da
+--     sessione mal configurata).
 -- ============================================================================
