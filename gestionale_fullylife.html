@@ -203,11 +203,6 @@ textarea{resize:vertical;min-height:58px}
   <p>Seleziona l'emittente per iniziare</p>
   <div class="profiles-grid" id="profiles-grid" style="justify-items:center"></div>
   <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:.5rem">
-    <button class="btn" onclick="document.getElementById('restore-login-input').click()">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-      Carica backup
-    </button>
-    <input type="file" id="restore-login-input" accept=".json" style="display:none" onchange="loadRestoreFileFromLogin(event)">
     <button class="btn" onclick="doLogout()">Esci</button>
   </div>
 </div>
@@ -782,9 +777,9 @@ textarea{resize:vertical;min-height:58px}
   <div class="topbar"><h2>Backup &amp; Ripristino</h2></div>
 
   <div class="card">
-    <div class="card-head"><div class="hl"><div class="ci">💾</div><div><h3>Esporta backup</h3><p>Salva un file .json con tutti i profili e i dati</p></div></div></div>
+    <div class="card-head"><div class="hl"><div class="ci">💾</div><div><h3>Esporta backup</h3><p>Salva un file .json con i dati di questo emittente</p></div></div></div>
     <div class="card-body">
-      <p style="font-size:.85rem;color:var(--ink-2);margin-bottom:14px">Il file include tutti i profili, documenti, cataloghi, clienti, impostazioni e loghi. Puoi scegliere una cartella specifica dove salvarlo automaticamente ad ogni backup.</p>
+      <p style="font-size:.85rem;color:var(--ink-2);margin-bottom:14px">Il file include le impostazioni fiscali, il catalogo personale e i documenti/fatture di <strong>questo emittente</strong>. Il catalogo comune e l'anagrafica clienti sono condivisi tra tutti gli emittenti e non entrano nel backup. Puoi scegliere una cartella specifica dove salvarlo automaticamente ad ogni backup.</p>
 
       <!-- Cartella fissa -->
       <div class="card" style="margin-bottom:14px;border-color:var(--accent-l);background:var(--accent-l)">
@@ -813,13 +808,9 @@ textarea{resize:vertical;min-height:58px}
       </div>
 
       <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <button class="btn btn-primary" onclick="exportBackup('tutti')">
+        <button class="btn btn-primary" onclick="exportBackup()">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Backup completo (tutti i profili)
-        </button>
-        <button class="btn btn-accent" onclick="exportBackup('corrente')">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Backup profilo corrente
+          Esporta backup di questo emittente
         </button>
       </div>
       <div id="backup-info" style="margin-top:12px;font-size:.8rem;color:var(--ink-2)"></div>
@@ -829,9 +820,9 @@ textarea{resize:vertical;min-height:58px}
   <div class="card">
     <div class="card-head"><div class="hl"><div class="ci">📂</div><div><h3>Ripristina backup</h3><p>Carica un file .json salvato in precedenza</p></div></div></div>
     <div class="card-body">
-      <p style="font-size:.85rem;color:var(--ink-2);margin-bottom:14px">Scegli come importare il backup: puoi <strong>aggiungere</strong> i profili del file a quelli esistenti, oppure <strong>sovrascrivere</strong> tutto con il contenuto del backup.</p>
-      <div style="background:var(--red-l);border-left:3px solid var(--red);border-radius:0 var(--r8) var(--r8) 0;padding:10px 14px;font-size:.8rem;margin-bottom:16px;color:var(--red)">
-        <strong>Attenzione:</strong> la modalità "Sovrascrivi tutto" cancellerà tutti i dati attuali in modo irreversibile.
+      <p style="font-size:.85rem;color:var(--ink-2);margin-bottom:14px">Il ripristino <strong>riempie l'emittente corrente</strong> con i dati del file (impostazioni fiscali, catalogo personale, documenti): pensato per un emittente vuoto appena creato — es. dopo aver ricreato l'ambiente da zero — non per unire dati in un emittente già in uso.</p>
+      <div style="background:var(--amber-l);border-left:3px solid var(--amber);border-radius:0 var(--r8) var(--r8) 0;padding:10px 14px;font-size:.8rem;margin-bottom:16px;color:var(--amber)">
+        <strong>Nota:</strong> le impostazioni fiscali correnti di questo emittente verranno sovrascritte con quelle del backup. Catalogo e documenti vengono aggiunti (non sovrascritti) — un documento con un numero già esistente per questo emittente non verrà importato.
       </div>
       <div class="logo-drop" id="restore-drop" style="min-height:76px;margin-bottom:14px">
         <input type="file" accept=".json" onchange="loadRestoreFile(event)">
@@ -839,13 +830,9 @@ textarea{resize:vertical;min-height:58px}
         <div id="restore-preview" style="display:none;font-size:.82rem;color:var(--green);font-weight:500;pointer-events:none"></div>
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <button class="btn btn-green" onclick="doRestore('merge')" id="btn-merge" disabled>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          Aggiungi ai profili esistenti
-        </button>
-        <button class="btn btn-danger" onclick="doRestore('overwrite')" id="btn-overwrite" disabled>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="1,4 1,10 7,10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></svg>
-          Sovrascrivi tutto
+        <button class="btn btn-green" onclick="doRestore()" id="btn-restore" disabled>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          Ripristina in questo emittente
         </button>
       </div>
     </div>
@@ -2569,46 +2556,47 @@ function clearFolder(){
   document.getElementById('backup-info').textContent='';
 }
 
-async function exportBackup(mode){
-  let payload;
-  const ts=new Date().toISOString();
+async function exportBackup(){
+  const[catRes,invRes]=await Promise.all([
+    supabaseClient.from('service_catalog').select('*').eq('emitter_id',curId),
+    supabaseClient.from('invoices').select('*, invoice_lines(*)').eq('emitter_id',curId)
+  ]);
+  if(catRes.error||invRes.error){alert('Errore nell\'esportazione: '+(catRes.error||invRes.error).message);return;}
 
-  if(mode==='tutti'){
-    const allData={};
-    profiles.forEach(p=>{
-      const pid=p.id,pdata={};
-      ['docs','products','settings'].forEach(k=>{try{pdata[k]=JSON.parse(localStorage.getItem('mp_'+pid+'_'+k)||'null');}catch(e){pdata[k]=null;}});
-      const tf=['t-data','t-cli','t-da','t-a','t-desc','t-veicolo','t-km','t-tar','t-ped','t-park','t-mezzo','t-vitto','t-alloggio','t-altre'];
-      pdata.travel={};tf.forEach(f=>{const v=localStorage.getItem('mp_'+pid+'_tr_'+f);if(v)pdata.travel[f]=v;});
-      allData[pid]=pdata;
-    });
-    payload={version:2,type:'completo',exportedAt:ts,profiles,allData,
-      sharedClients:JSON.parse(localStorage.getItem('mp_shared_clients')||'[]'),
-      sharedProducts:JSON.parse(localStorage.getItem('mp_shared_products')||'[]'),
-      sharedCategories:JSON.parse(localStorage.getItem('mp_shared_categories')||'[]')
-    };
-  }else{
-    const pdata={};
-    ['docs','products','settings'].forEach(k=>{try{pdata[k]=JSON.parse(localStorage.getItem(pk(k))||'null');}catch(e){pdata[k]=null;}});
-    const tf=['t-data','t-cli','t-da','t-a','t-desc','t-veicolo','t-km','t-tar','t-ped','t-park','t-mezzo','t-vitto','t-alloggio','t-altre'];
-    pdata.travel={};tf.forEach(f=>{const v=localStorage.getItem(pk('tr_'+f));if(v)pdata.travel[f]=v;});
-    const curProfile=profiles.find(x=>x.id===curId);
-    payload={version:2,type:'profilo',exportedAt:ts,profiles:[curProfile],allData:{[curId]:pdata},
-      sharedClients:JSON.parse(localStorage.getItem('mp_shared_clients')||'[]'),
-      sharedProducts:JSON.parse(localStorage.getItem('mp_shared_products')||'[]'),
-      sharedCategories:JSON.parse(localStorage.getItem('mp_shared_categories')||'[]')
-    };
-  }
+  const payload={
+    version:3,type:'emittente',exportedAt:new Date().toISOString(),
+    emitter:{
+      denominazione:curEmitter.denominazione,partita_iva:curEmitter.partita_iva,codice_fiscale:curEmitter.codice_fiscale,
+      regime_fiscale:curEmitter.regime_fiscale,indirizzo:curEmitter.indirizzo,cap:curEmitter.cap,comune:curEmitter.comune,
+      provincia:curEmitter.provincia,email:curEmitter.email,pec:curEmitter.pec,telefono:curEmitter.telefono,iban:curEmitter.iban,
+      ateco:curEmitter.ateco,prefisso_preventivo:curEmitter.prefisso_preventivo,prefisso_fattura:curEmitter.prefisso_fattura,
+      prefisso_proforma:curEmitter.prefisso_proforma,prefisso_nota:curEmitter.prefisso_nota,
+      riferimento_normativo:curEmitter.riferimento_normativo,footer:curEmitter.footer,
+      aliquota_irpef:curEmitter.aliquota_irpef,aliquota_inps:curEmitter.aliquota_inps,coeff_redditivita:curEmitter.coeff_redditivita,
+      acconto:curEmitter.acconto,role_label:curEmitter.role_label,color_index:curEmitter.color_index
+    },
+    catalog:(catRes.data||[]).map(r=>({nome:r.nome,prezzo:r.prezzo,unita_misura:r.unita_misura,descrizione:r.descrizione,categoria:r.categoria})),
+    invoices:(invRes.data||[]).map(r=>({
+      tipo:r.tipo,numero:r.numero,data:r.data,scadenza:r.scadenza,aliquota_iva:r.aliquota_iva,imponibile:r.imponibile,
+      imposta:r.imposta,totale:r.totale,note:r.note,stato:r.stato,pagato:r.pagato,archiviato:r.archiviato,
+      cliente_nome:r.cliente_nome,cliente_piva:r.cliente_piva,cliente_email:r.cliente_email,cliente_indirizzo:r.cliente_indirizzo,
+      cliente_cap:r.cliente_cap,cliente_comune:r.cliente_comune,cliente_provincia:r.cliente_provincia,
+      cliente_cod_dest:r.cliente_cod_dest,cliente_pec_sdi:r.cliente_pec_sdi,
+      data_pagamento:r.data_pagamento,metodo_pagamento:r.metodo_pagamento,prev_ref:r.prev_ref,
+      righe:(r.invoice_lines||[]).slice().sort((a,b)=>a.numero_linea-b.numero_linea).map(l=>({
+        numero_linea:l.numero_linea,descrizione:l.descrizione,quantita:l.quantita,unita_misura:l.unita_misura,
+        prezzo_unitario:l.prezzo_unitario,prezzo_totale:l.prezzo_totale
+      }))
+    }))
+  };
 
   const json=JSON.stringify(payload,null,2);
   const dateStr=new Date().toISOString().slice(0,10);
-  const profName=mode==='tutti'?'tutti-profili':(profiles.find(x=>x.id===curId)?.nome||'profilo').toLowerCase().replace(/\s+/g,'-');
-  const fileName=`studio-backup-${profName}-${dateStr}.json`;
+  const emName=(curEmitter.denominazione||'emittente').toLowerCase().replace(/\s+/g,'-');
+  const fileName=`backup-${emName}-${dateStr}.json`;
 
   let savedTo='cartella Download';
-
   if(folderHandle){
-    // Salva direttamente nella cartella scelta
     try{
       const fileHandle=await folderHandle.getFileHandle(fileName,{create:true});
       const writable=await fileHandle.createWritable();
@@ -2624,7 +2612,7 @@ async function exportBackup(mode){
   }
 
   const now=new Date().toLocaleString('it-IT');
-  const count=mode==='tutti'?profiles.length+' profili':'1 profilo · '+(JSON.parse(localStorage.getItem(pk('docs'))||'[]')).length+' documenti';
+  const count=payload.catalog.length+' servizi · '+payload.invoices.length+' documenti';
   document.getElementById('last-backup-info').innerHTML=`<strong>✓ Backup esportato</strong> il ${now}<br><span style="color:var(--ink-3)">File: <strong>${fileName}</strong> · ${count} · salvato in: <strong>${savedTo}</strong></span>`;
   document.getElementById('backup-info').innerHTML=`<span style="color:var(--green)">✓ Salvato: <strong>${fileName}</strong> → <strong>${savedTo}</strong></span>`;
 }
@@ -2641,70 +2629,79 @@ function loadRestoreFile(e){
   r.onload=ev=>{
     try{
       restoreData=JSON.parse(ev.target.result);
-      if(!restoreData.profiles||!restoreData.allData)throw new Error('Formato non valido');
-      const np=restoreData.profiles.length;
-      const totDocs=Object.values(restoreData.allData).reduce((s,d)=>s+(d.docs?.length||0),0);
+      if(!restoreData.emitter)throw new Error('Formato non valido');
       const expDate=restoreData.exportedAt?new Date(restoreData.exportedAt).toLocaleString('it-IT'):'—';
       document.getElementById('restore-txt').style.display='none';
       document.getElementById('restore-preview').style.display='block';
-      document.getElementById('restore-preview').innerHTML=`✓ File valido: <strong>${np} profilo${np!==1?'i':''}</strong>, ${totDocs} documenti totali · esportato il ${expDate}`;
-      document.getElementById('btn-merge').disabled=false;
-      document.getElementById('btn-overwrite').disabled=false;
+      document.getElementById('restore-preview').innerHTML=`✓ File valido: <strong>${restoreData.emitter.denominazione||'?'}</strong> — ${(restoreData.catalog||[]).length} servizi, ${(restoreData.invoices||[]).length} documenti · esportato il ${expDate}`;
+      document.getElementById('btn-restore').disabled=false;
     }catch(err){
       restoreData=null;
       document.getElementById('restore-preview').style.display='block';
       document.getElementById('restore-preview').style.color='var(--red)';
       document.getElementById('restore-preview').textContent='✕ File non valido o corrotto. Riprova con un backup corretto.';
-      document.getElementById('btn-merge').disabled=true;
-      document.getElementById('btn-overwrite').disabled=true;
+      document.getElementById('btn-restore').disabled=true;
     }
   };
   r.readAsText(f);
 }
 
-function doRestore(mode){
+async function doRestore(){
   if(!restoreData){alert('Nessun file caricato.');return;}
-  if(mode==='overwrite'&&!confirm('Sovrascrivere TUTTI i dati attuali con il backup? Questa operazione non può essere annullata.'))return;
-  if(mode==='merge'&&!confirm(`Aggiungere ${restoreData.profiles.length} profilo/i dal backup a quelli esistenti?`))return;
+  if(!confirm(`Ripristinare i dati di "${restoreData.emitter?.denominazione||'?'}" in QUESTO emittente (${curEmitter.denominazione})?\n\nLe impostazioni fiscali correnti verranno sovrascritte. Catalogo e documenti vengono aggiunti (un numero fattura già esistente per questo emittente non verrà importato).`))return;
 
-  if(mode==='overwrite'){
-    // Pulisce tutto
-    Object.keys(localStorage).filter(k=>k.startsWith('mp_')).forEach(k=>localStorage.removeItem(k));
-    profiles=[];
+  if(restoreData.emitter){
+    const{error}=await supabaseClient.from('emitter_settings').update(restoreData.emitter).eq('id',curId);
+    if(error){alert('Errore nel ripristino delle impostazioni: '+error.message);return;}
   }
 
-  // Importa profili (evita duplicati per id in merge)
-  restoreData.profiles.forEach(p=>{
-    if(mode==='merge'&&profiles.find(x=>x.id===p.id)){
-      // rinomina con suffisso se già esiste
-      p=Object.assign({},p,{id:p.id+'_imp_'+Date.now(),nome:p.nome+' (importato)'});
-    }
-    profiles.push(p);
-    const pdata=restoreData.allData[p.id]||restoreData.allData[Object.keys(restoreData.allData)[0]];
-    if(!pdata)return;
-    ['docs','products','settings'].forEach(k=>{
-      if(pdata[k]!=null)localStorage.setItem('mp_'+p.id+'_'+k,JSON.stringify(pdata[k]));
-    });
-    if(pdata.travel){
-      Object.entries(pdata.travel).forEach(([f,v])=>localStorage.setItem('mp_'+p.id+'_tr_'+f,v));
-    }
-  });
+  let catOk=0,catErr=0;
+  for(const p of (restoreData.catalog||[])){
+    const{error}=await supabaseClient.from('service_catalog').insert({...p,emitter_id:curId});
+    if(error)catErr++;else catOk++;
+  }
 
-  // Ripristina dati condivisi
-  if(restoreData.sharedClients) localStorage.setItem('mp_shared_clients',JSON.stringify(restoreData.sharedClients));
-  if(restoreData.sharedProducts) localStorage.setItem('mp_shared_products',JSON.stringify(restoreData.sharedProducts));
-  if(restoreData.sharedCategories) localStorage.setItem('mp_shared_categories',JSON.stringify(restoreData.sharedCategories));
+  let invOk=0,invErr=0;
+  const maxNumByKey={};
+  for(const inv of (restoreData.invoices||[])){
+    const{righe,...header}=inv;
+    const{data:ins,error}=await supabaseClient.from('invoices').insert({...header,emitter_id:curId}).select().single();
+    if(error){invErr++;continue;}
+    invOk++;
+    if(righe&&righe.length){
+      await supabaseClient.from('invoice_lines').insert(righe.map(r=>({...r,invoice_id:ins.id})));
+    }
+    if(ins.numero){
+      const m=ins.numero.match(/-(\d+)-(\d{4})$/);
+      if(m){
+        const key=ins.tipo+'|'+m[2];
+        maxNumByKey[key]=Math.max(maxNumByKey[key]||0,parseInt(m[1]));
+      }
+    }
+  }
 
-  localStorage.setItem('mp_profiles',JSON.stringify(profiles));
+  // Riallinea billing_counters al massimo importato, MAI abbassandolo se è già più avanti.
+  for(const key of Object.keys(maxNumByKey)){
+    const[tipo,annoStr]=key.split('|');
+    const anno=parseInt(annoStr);
+    const{data:existing}=await supabaseClient.from('billing_counters').select('ultimo_num')
+      .eq('emitter_id',curId).eq('tipo',tipo).eq('anno',anno).maybeSingle();
+    const nuovo=Math.max(existing?.ultimo_num||0,maxNumByKey[key]);
+    await supabaseClient.from('billing_counters').upsert(
+      {emitter_id:curId,tipo,anno,ultimo_num:nuovo},{onConflict:'emitter_id,tipo,anno'}
+    );
+  }
+
+  await loadCatalog();await loadDocs();await loadPD();updateSB();
+
   const now=new Date().toLocaleString('it-IT');
-  document.getElementById('last-backup-info').innerHTML=`<strong>✓ Ripristino completato</strong> il ${now} (modalità: ${mode==='merge'?'unione':'sovrascrittura'})`;
+  const esito=`${catOk} servizi importati${catErr?` (${catErr} falliti)`:''}, ${invOk} documenti importati${invErr?` (${invErr} falliti, probabile numero già esistente)`:''}`;
+  document.getElementById('last-backup-info').innerHTML=`<strong>✓ Ripristino completato</strong> il ${now}<br><span style="color:var(--ink-3)">${esito}</span>`;
   restoreData=null;
   document.getElementById('restore-txt').style.display='block';
   document.getElementById('restore-preview').style.display='none';
-  document.getElementById('btn-merge').disabled=true;
-  document.getElementById('btn-overwrite').disabled=true;
-  alert(`✓ Ripristino completato! ${mode==='overwrite'?'Tutti i dati sono stati sostituiti.':'I profili sono stati aggiunti.'}\nTorna alla schermata profili per selezionare un profilo.`);
-  switchProfile();
+  document.getElementById('btn-restore').disabled=true;
+  alert(`✓ Ripristino completato.\n${esito}`);
 }
 
 // ══ FINANZE ══
@@ -2940,50 +2937,6 @@ function importClientiCSV(e){
   e.target.value='';
 }
 
-
-// ══ RESTORE FROM LOGIN ══
-function loadRestoreFileFromLogin(e){
-  const f=e.target.files[0];if(!f)return;
-  const r=new FileReader();
-  r.onload=ev=>{
-    try{
-      const data=JSON.parse(ev.target.result);
-      if(!data.profiles||!data.allData) throw new Error('Formato non valido');
-      let imported=0;
-      data.profiles.forEach(p=>{
-        let pid=p.id;
-        if(profiles.find(x=>x.id===pid)) pid=pid+'_imp_'+Date.now();
-        profiles.push({...p,id:pid});
-        const pdata=data.allData[p.id]||{};
-        ['docs','products','settings'].forEach(k=>{
-          if(pdata[k]!=null) localStorage.setItem('mp_'+pid+'_'+k,JSON.stringify(pdata[k]));
-        });
-        if(pdata.travel) Object.entries(pdata.travel).forEach(([field,val])=>localStorage.setItem('mp_'+pid+'_tr_'+field,val));
-        imported++;
-      });
-      // Ripristina dati condivisi
-      if(data.sharedClients) localStorage.setItem('mp_shared_clients',JSON.stringify(data.sharedClients));
-      if(data.sharedProducts) localStorage.setItem('mp_shared_products',JSON.stringify(data.sharedProducts));
-      if(data.sharedCategories) localStorage.setItem('mp_shared_categories',JSON.stringify(data.sharedCategories));
-      localStorage.setItem('mp_profiles',JSON.stringify(profiles));
-      e.target.value='';
-      renderPS();
-      const msg=document.createElement('div');
-      msg.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#2D6A4F;color:white;padding:10px 24px;border-radius:8px;font-size:.85rem;font-weight:600;z-index:9999';
-      msg.textContent='✓ '+imported+' profilo'+(imported!==1?'i':'')+' importato'+(imported!==1?'i':'')+' con successo';
-      document.body.appendChild(msg);
-      setTimeout(()=>msg.remove(),3000);
-    }catch(err){
-      const msg=document.createElement('div');
-      msg.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#A02020;color:white;padding:10px 24px;border-radius:8px;font-size:.85rem;font-weight:600;z-index:9999';
-      msg.textContent='✕ Errore: '+err.message;
-      document.body.appendChild(msg);
-      setTimeout(()=>msg.remove(),4000);
-      e.target.value='';
-    }
-  };
-  r.readAsText(f,'UTF-8');
-}
 
 // ══ REFRESH CATALOG ══
 function refreshCatalog(){
