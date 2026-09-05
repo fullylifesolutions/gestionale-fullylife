@@ -116,6 +116,12 @@ create table public.billing_profiles (
     -- recapito fatturazione elettronica
     codice_destinatario text,                   -- 7 char SDI, oppure NULL se si usa PEC
     pec_destinatario    text,
+    email           text,                       -- contatto fatturazione: companies/persons non hanno
+                                                  -- una colonna email adatta condivisa con altri domini
+    partita_iva     text,                       -- SOLO quando person_id è valorizzato: un professionista
+                                                  -- con P.IVA. persons non ha questa colonna nativamente.
+                                                  -- Per le aziende la P.IVA resta companies.partita_iva,
+                                                  -- unica fonte, non duplicata qui.
     -- indirizzo di fatturazione (strutturato per XML)
     indirizzo       text,
     cap             text,
@@ -337,6 +343,46 @@ create policy catalog_all on public.service_catalog
 -- service_categories: globali, chi fattura legge/scrive
 create policy categories_all on public.service_categories
     for all using (public.can_bill()) with check (public.can_bill());
+
+-- ----------------------------------------------------------------------------
+-- 7b. POLICY ADDITIVE su companies/persons (tabelle GESPP esistenti) per la
+--     fatturazione. NON sostituiscono le policy GESPP già presenti su queste
+--     tabelle (companies_read/companies_admin_write, persons_read/
+--     persons_insert/persons_update/persons_delete) — le policy Postgres per
+--     lo stesso comando si combinano in OR, quindi questo apre un percorso
+--     d'accesso aggiuntivo scoped a can_bill(), senza toccare né restringere
+--     l'accesso già concesso ai consulenti/admin GESPP.
+--
+--     Verificato (2026-09-05): senza queste policy un utente puo_fatturare
+--     non admin e non collegato via consultant_company non può leggere né
+--     scrivere companies/persons — buco reale, non solo teorico.
+--
+--     Nessuna policy di DELETE per can_bill(): companies/persons sono
+--     soggetti condivisi tra tutti i domini, la cancellazione resta
+--     admin-only (comportamento GESPP esistente, non toccato). L'azione
+--     "elimina cliente" nel frontend cancella solo la riga billing_profiles
+--     collegata, mai il soggetto condiviso.
+--
+--     Su persons, scoped a tipo='professionista': un utente fatturazione
+--     non deve poter leggere/creare righe 'dipendente', che appartengono al
+--     dominio di profilazione aziendale GESPP, non a quello fatturazione.
+-- ----------------------------------------------------------------------------
+create policy companies_billing_select on public.companies
+    for select using (public.can_bill());
+create policy companies_billing_insert on public.companies
+    for insert with check (public.can_bill());
+create policy companies_billing_update on public.companies
+    for update using (public.can_bill()) with check (public.can_bill());
+
+create policy persons_billing_select on public.persons
+    for select using (public.can_bill() and tipo = 'professionista'::person_type);
+create policy persons_billing_insert on public.persons
+    for insert with check (public.can_bill() and tipo = 'professionista'::person_type);
+create policy persons_billing_update on public.persons
+    for update using (public.can_bill() and tipo = 'professionista'::person_type)
+    with check (public.can_bill() and tipo = 'professionista'::person_type);
+
+grant select, insert, update on public.companies, public.persons to authenticated;
 
 -- GRANT di base (la RLS filtra le righe)
 grant select, insert, update, delete on

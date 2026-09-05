@@ -482,24 +482,33 @@ textarea{resize:vertical;min-height:58px}
   <div class="card">
     <div class="card-head"><div class="hl"><div class="ci">➕</div><div><h3 id="cl-form-title">Aggiungi cliente</h3></div></div></div>
     <div class="card-body">
+      <div class="field" style="margin-bottom:11px">
+        <label>Tipo cliente</label>
+        <div style="display:flex;gap:16px;margin-top:2px">
+          <label style="display:flex;align-items:center;gap:5px;font-weight:400;text-transform:none;font-size:.85rem;cursor:pointer"><input type="radio" name="cl-tipo" value="azienda" checked onchange="updateClientFormType()"> Azienda</label>
+          <label style="display:flex;align-items:center;gap:5px;font-weight:400;text-transform:none;font-size:.85rem;cursor:pointer"><input type="radio" name="cl-tipo" value="persona" onchange="updateClientFormType()"> Persona fisica</label>
+        </div>
+      </div>
       <div class="grid2" style="margin-bottom:9px">
-        <div class="field"><label>Nome / Ragione sociale</label><input type="text" id="cl-nome"></div>
+        <div class="field"><label id="cl-nome-label">Nome / Ragione sociale</label><input type="text" id="cl-nome"></div>
+        <div class="field" id="cl-cognome-field" style="display:none"><label>Cognome</label><input type="text" id="cl-cognome"></div>
         <div class="field">
-          <label>P.IVA / C.F.</label>
+          <label id="cl-piva-label">P.IVA / C.F.</label>
           <div style="display:flex;gap:6px">
             <input type="text" id="cl-piva" placeholder="Es. IT12345678901" style="flex:1">
-            <button class="btn btn-sm" onclick="cercaDaPiva('cl-piva','cl-nome','cl-ind','cl-cap','cl-comune','cl-prov')" title="Cerca ragione sociale da P.IVA (VIES)" style="flex-shrink:0;white-space:nowrap">
+            <button class="btn btn-sm" id="cl-vies-btn" onclick="cercaDaPiva('cl-piva','cl-nome','cl-ind','cl-cap','cl-comune','cl-prov')" title="Cerca ragione sociale da P.IVA (VIES)" style="flex-shrink:0;white-space:nowrap">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
               Cerca
             </button>
           </div>
         </div>
+        <div class="field" id="cl-cf-field" style="display:none"><label>Codice Fiscale</label><input type="text" id="cl-cf" maxlength="16" style="text-transform:uppercase"></div>
         <div class="field"><label>Email</label><input type="email" id="cl-email"></div>
         <div class="field"><label>Indirizzo (Via e n. civico)</label><input type="text" id="cl-ind"></div>
         <div class="field"><label>CAP</label><input type="text" id="cl-cap" placeholder="20100" maxlength="5"></div>
         <div class="field"><label>Comune</label><input type="text" id="cl-comune"></div>
         <div class="field"><label>Provincia (sigla)</label><input type="text" id="cl-prov" placeholder="MI" maxlength="2" style="text-transform:uppercase"></div>
-        <div class="field"><label>Responsabile Legale</label><input type="text" id="cl-rl" placeholder="Nome e cognome"></div>
+        <div class="field" id="cl-rl-field"><label>Responsabile Legale</label><input type="text" id="cl-rl" placeholder="Nome e cognome"></div>
         <div class="field"><label>Codice SDI (7 cifre)</label><input type="text" id="cl-sdi" placeholder="0000000" oninput="this.value=this.value.replace(/\s/g,'').toUpperCase().slice(0,7)"></div>
         <div class="field"><label>PEC SDI</label><input type="email" id="cl-pec" placeholder="fatture@pec.azienda.it"></div>
       </div>
@@ -999,13 +1008,9 @@ function mapEmitterToSettings(e){
 function loadPD(){
   docs=pg('docs',[]);
   settings=mapEmitterToSettings(curEmitter);
-  // Clienti condivisi tra tutti i profili
-  try{clients=JSON.parse(localStorage.getItem('mp_shared_clients')||'[]');}catch(e){clients=[];}
 }
 function savePD(){
   ps('docs',docs);
-  // Clienti condivisi
-  localStorage.setItem('mp_shared_clients',JSON.stringify(clients));
   showToast();
 }
 function fromDbProduct(row){
@@ -1040,7 +1045,7 @@ async function enterProfile(id){
   const {data,error}=await supabaseClient.from('emitter_settings').select('*').eq('id',id).single();
   if(error||!data){alert('Errore nel caricamento dell\'emittente: '+(error?error.message:'non trovato'));return;}
   curEmitter=data;curId=id;
-  loadPD();updateSB();loadCatalog();
+  loadPD();updateSB();loadCatalog();loadClients();
   showScreen('app-shell');
   document.getElementById('d-data').value=new Date().toISOString().split('T')[0];
   document.getElementById('d-num').value=nextNum('preventivo');
@@ -1411,7 +1416,7 @@ function calcTots(){
   const rt=parseFloat(document.getElementById('iva-r').value)||0,iv=n*rt/100;
   document.getElementById('tn').textContent=fe(n);document.getElementById('ti').textContent=fe(iv);document.getElementById('tg').textContent=fe(n+iv);
 }
-function saveDoc(status){
+async function saveDoc(status){
   const num=document.getElementById('d-num').value.trim(),cn=document.getElementById('d-cnome').value.trim();
   if(!num){alert('Inserisci il numero documento.');return;}
   const n=rows.reduce((s,r)=>s+r.qty*r.price,0),rt=parseFloat(document.getElementById('iva-r').value)||0;
@@ -1421,8 +1426,12 @@ function saveDoc(status){
       codDest:document.getElementById('d-ccoddest').value.trim().replace(/\s/g,'').toUpperCase(),pecSdi:document.getElementById('d-cpec').value.trim()},
     righe:[...rows],ivaRate:rt,totale:parseFloat((n*(1+rt/100)).toFixed(2)),note:document.getElementById('d-note').value,status};
   if(editId){const i=docs.findIndex(d=>d.id===editId);if(i>=0)docs[i]=doc;}else docs.unshift(doc);
-  if(document.getElementById('d-svc').checked&&cn&&!clients.find(c=>c.nome===cn))
-    clients.push({id:Date.now(),nome:cn,piva:doc.cliente.piva,email:doc.cliente.email,ind:doc.cliente.ind,cap:doc.cliente.cap,comune:doc.cliente.comune,prov:doc.cliente.prov,codDest:doc.cliente.codDest,pecSdi:doc.cliente.pecSdi});
+  if(document.getElementById('d-svc').checked&&cn&&!clients.find(c=>c.nome===cn)){
+    // Il form documento non distingue azienda/persona: un cliente salvato da qui è sempre
+    // un'azienda. Per un cliente-persona va creato/modificato dall'anagrafica clienti.
+    await upsertClientAzienda(null,{nome:cn,...doc.cliente});
+    await loadClients();
+  }
   savePD();resetDoc();goTo('documenti');
 }
 function editDoc(id){
@@ -1591,48 +1600,150 @@ async function dupProd(id,e){
 }
 
 // ══ CLIENTS ══
-let editClientId=null;
+let editClientId=null,editClientType=null;
 
-function addClient(){
-  const n=document.getElementById('cl-nome').value.trim();if(!n)return;
-  const data={
-    nome:n,
-    piva:document.getElementById('cl-piva').value,
-    email:document.getElementById('cl-email').value,
-    ind:document.getElementById('cl-ind').value,
-    cap:document.getElementById('cl-cap').value,
-    comune:document.getElementById('cl-comune').value,
-    prov:document.getElementById('cl-prov').value.toUpperCase(),
-    respLegale:document.getElementById('cl-rl').value,
-    codDest:document.getElementById('cl-sdi').value.trim().replace(/\s/g,'').toUpperCase(),
-    pecSdi:document.getElementById('cl-pec').value
+function updateClientFormType(){
+  const tipo=document.querySelector('input[name="cl-tipo"]:checked').value;
+  const isAzienda=tipo==='azienda';
+  document.getElementById('cl-nome-label').textContent=isAzienda?'Ragione sociale':'Nome';
+  document.getElementById('cl-cognome-field').style.display=isAzienda?'none':'';
+  document.getElementById('cl-cf-field').style.display=isAzienda?'none':'';
+  document.getElementById('cl-piva-label').textContent=isAzienda?'P.IVA':'P.IVA (opzionale)';
+  document.getElementById('cl-vies-btn').style.display=isAzienda?'':'none';
+  document.getElementById('cl-rl-field').style.display=isAzienda?'':'none';
+}
+
+function fromCompany(row){
+  const bp=Array.isArray(row.billing_profiles)?row.billing_profiles[0]:row.billing_profiles;
+  return{id:row.id,tipo:'azienda',nome:row.ragione_sociale,piva:row.partita_iva||'',
+    email:bp?.email||'',ind:bp?.indirizzo||'',cap:bp?.cap||'',comune:bp?.comune||'',prov:bp?.provincia||'',
+    respLegale:bp?.responsabile_legale||'',codDest:bp?.codice_destinatario||'',pecSdi:bp?.pec_destinatario||''};
+}
+function fromPerson(row){
+  const bp=Array.isArray(row.billing_profiles)?row.billing_profiles[0]:row.billing_profiles;
+  return{id:row.id,tipo:'persona',nome:[row.nome,row.cognome].filter(Boolean).join(' '),
+    nomeOnly:row.nome||'',cognome:row.cognome||'',cf:row.codice_fiscale||'',
+    piva:bp?.partita_iva||'',
+    email:bp?.email||'',ind:bp?.indirizzo||'',cap:bp?.cap||'',comune:bp?.comune||'',prov:bp?.provincia||'',
+    respLegale:'',codDest:bp?.codice_destinatario||'',pecSdi:bp?.pec_destinatario||''};
+}
+async function loadClients(){
+  const [co,pe]=await Promise.all([
+    supabaseClient.from('companies').select('*, billing_profiles(*)').order('ragione_sociale'),
+    supabaseClient.from('persons').select('*, billing_profiles(*)').eq('tipo','professionista').order('cognome')
+  ]);
+  if(co.error||pe.error){alert('Errore nel caricamento dei clienti: '+(co.error||pe.error).message);return;}
+  clients=[...(co.data||[]).map(fromCompany),...(pe.data||[]).map(fromPerson)];
+  renderCliList();
+}
+
+// Validazione/sanificazione comune ai dati di billing_profiles (SDI 7 caratteri, CAP 5 cifre):
+// senza questo, un campo lasciato vuoto arriva come stringa vuota e viola i check constraint
+// dello schema (stesso problema già risolto per le Impostazioni emittente nel Modulo 1).
+// f: {email,ind,cap,comune,prov,codDest,pecSdi} — stessa forma piatta usata ovunque nel resto del codice.
+function sanitizeBillingCommon(f){
+  const sdiVal=(f.codDest||'').trim().replace(/\s/g,'').toUpperCase();
+  const capVal=(f.cap||'').trim();
+  if(sdiVal&&!/^[A-Z0-9]{7}$/.test(sdiVal)){alert('Il Codice SDI deve avere esattamente 7 caratteri alfanumerici.');return null;}
+  if(capVal&&!/^\d{5}$/.test(capVal)){alert('Il CAP deve contenere esattamente 5 cifre.');return null;}
+  return{
+    email:(f.email||'').trim()||null,
+    indirizzo:(f.ind||'').trim()||null,
+    cap:capVal||null,
+    comune:(f.comune||'').trim()||null,
+    provincia:(f.prov||'').trim().toUpperCase()||null,
+    codice_destinatario:sdiVal||null,
+    pec_destinatario:(f.pecSdi||'').trim()||null
   };
-  if(editClientId){
-    const i=clients.findIndex(c=>c.id===editClientId);
-    if(i>=0) clients[i]={...clients[i],...data};
-    editClientId=null;
-    document.getElementById('cl-submit-btn').textContent='Salva cliente';
-    document.getElementById('cl-cancel-btn').style.display='none';
-    document.getElementById('cl-form-title').textContent='Aggiungi cliente';
+}
+function readClientFormAzienda(){
+  return{nome:document.getElementById('cl-nome').value.trim(),piva:document.getElementById('cl-piva').value,
+    email:document.getElementById('cl-email').value,ind:document.getElementById('cl-ind').value,
+    cap:document.getElementById('cl-cap').value,comune:document.getElementById('cl-comune').value,
+    prov:document.getElementById('cl-prov').value,respLegale:document.getElementById('cl-rl').value,
+    codDest:document.getElementById('cl-sdi').value,pecSdi:document.getElementById('cl-pec').value};
+}
+function readClientFormPersona(){
+  return{nome:document.getElementById('cl-nome').value.trim(),cognome:document.getElementById('cl-cognome').value,
+    cf:document.getElementById('cl-cf').value,piva:document.getElementById('cl-piva').value,
+    email:document.getElementById('cl-email').value,ind:document.getElementById('cl-ind').value,
+    cap:document.getElementById('cl-cap').value,comune:document.getElementById('cl-comune').value,
+    prov:document.getElementById('cl-prov').value,
+    codDest:document.getElementById('cl-sdi').value,pecSdi:document.getElementById('cl-pec').value};
+}
+async function upsertClientAzienda(companyId,f){
+  if(!f.nome)return null;
+  const billing=sanitizeBillingCommon(f);if(!billing)return null;
+  const subjPayload={ragione_sociale:f.nome,partita_iva:(f.piva||'').trim()||null};
+  let id=companyId;
+  if(id){
+    const{error}=await supabaseClient.from('companies').update(subjPayload).eq('id',id);
+    if(error){alert('Errore nel salvataggio del cliente: '+error.message);return null;}
   } else {
-    clients.push({id:Date.now(),...data});
+    const{data,error}=await supabaseClient.from('companies').insert(subjPayload).select().single();
+    if(error){alert('Errore nel salvataggio del cliente: '+error.message);return null;}
+    id=data.id;
   }
-  savePD();renderCliList();
-  ['cl-nome','cl-piva','cl-email','cl-ind','cl-cap','cl-comune','cl-prov','cl-rl','cl-sdi','cl-pec'].forEach(id=>document.getElementById(id).value='');
+  const{error:e2}=await supabaseClient.from('billing_profiles')
+    .upsert({company_id:id,person_id:null,...billing,responsabile_legale:(f.respLegale||'').trim()||null},{onConflict:'company_id'});
+  if(e2){alert('Errore nel salvataggio dei dati di fatturazione: '+e2.message);return null;}
+  return id;
+}
+async function upsertClientPersona(personId,f){
+  if(!f.nome)return null;
+  const billing=sanitizeBillingCommon(f);if(!billing)return null;
+  const subjPayload={tipo:'professionista',nome:f.nome,cognome:(f.cognome||'').trim(),
+    codice_fiscale:(f.cf||'').trim().toUpperCase()||null,company_id:null};
+  let id=personId;
+  if(id){
+    const{error}=await supabaseClient.from('persons').update(subjPayload).eq('id',id);
+    if(error){alert('Errore nel salvataggio del cliente: '+error.message);return null;}
+  } else {
+    const{data,error}=await supabaseClient.from('persons').insert(subjPayload).select().single();
+    if(error){alert('Errore nel salvataggio del cliente: '+error.message);return null;}
+    id=data.id;
+  }
+  const{error:e2}=await supabaseClient.from('billing_profiles')
+    .upsert({person_id:id,company_id:null,...billing,partita_iva:(f.piva||'').trim()||null},{onConflict:'person_id'});
+  if(e2){alert('Errore nel salvataggio dei dati di fatturazione: '+e2.message);return null;}
+  return id;
+}
+
+async function addClient(){
+  const tipo=document.querySelector('input[name="cl-tipo"]:checked').value;
+  const id=tipo==='azienda'
+    ?await upsertClientAzienda(editClientType==='azienda'?editClientId:null,readClientFormAzienda())
+    :await upsertClientPersona(editClientType==='persona'?editClientId:null,readClientFormPersona());
+  if(!id)return; // errore già mostrato, o nome mancante
+
+  editClientId=null;editClientType=null;
+  document.getElementById('cl-submit-btn').textContent='Salva cliente';
+  document.getElementById('cl-cancel-btn').style.display='none';
+  document.getElementById('cl-form-title').textContent='Aggiungi cliente';
+  await loadClients();
+  ['cl-nome','cl-cognome','cl-cf','cl-piva','cl-email','cl-ind','cl-cap','cl-comune','cl-prov','cl-rl','cl-sdi','cl-pec'].forEach(fid=>document.getElementById(fid).value='');
+  document.querySelector('input[name="cl-tipo"][value="azienda"]').checked=true;
+  updateClientFormType();
 }
 
 function cancelEditClient(){
-  editClientId=null;
-  ['cl-nome','cl-piva','cl-email','cl-ind','cl-cap','cl-comune','cl-prov','cl-rl','cl-sdi','cl-pec'].forEach(id=>document.getElementById(id).value='');
+  editClientId=null;editClientType=null;
+  ['cl-nome','cl-cognome','cl-cf','cl-piva','cl-email','cl-ind','cl-cap','cl-comune','cl-prov','cl-rl','cl-sdi','cl-pec'].forEach(id=>document.getElementById(id).value='');
+  document.querySelector('input[name="cl-tipo"][value="azienda"]').checked=true;
+  updateClientFormType();
   document.getElementById('cl-submit-btn').textContent='Salva cliente';
   document.getElementById('cl-cancel-btn').style.display='none';
   document.getElementById('cl-form-title').textContent='Aggiungi cliente';
 }
 
-function editClient(id){
-  const c=clients.find(x=>x.id===id);if(!c)return;
-  editClientId=id;
-  document.getElementById('cl-nome').value=c.nome||'';
+function editClient(id,tipo){
+  const c=clients.find(x=>x.id===id&&x.tipo===tipo);if(!c)return;
+  editClientId=id;editClientType=tipo;
+  document.querySelector(`input[name="cl-tipo"][value="${tipo}"]`).checked=true;
+  updateClientFormType();
+  document.getElementById('cl-nome').value=tipo==='azienda'?(c.nome||''):(c.nomeOnly||'');
+  document.getElementById('cl-cognome').value=c.cognome||'';
+  document.getElementById('cl-cf').value=c.cf||'';
   document.getElementById('cl-piva').value=c.piva||'';
   document.getElementById('cl-email').value=c.email||'';
   document.getElementById('cl-ind').value=c.ind||'';
@@ -1652,17 +1763,22 @@ function editClient(id){
 function renderCliList(){
   document.getElementById('cli-list').innerHTML=clients.length?clients.map(c=>`
     <div class="cli-item">
-      <span class="cli-name">${c.nome}</span>
+      <span class="cli-name">${c.nome}${c.tipo==='persona'?' <span style="font-size:.68rem;color:var(--ink-3)">(persona)</span>':''}</span>
       <span class="cli-info">${[c.piva,c.email,c.codDest?'SDI: '+c.codDest:null,c.pecSdi?'PEC: '+c.pecSdi:null].filter(Boolean).join(' · ')}</span>
-      <button class="btn btn-sm" onclick="openStorico(${c.id})">Storico</button>
-      <button class="btn btn-sm" onclick="editClient(${c.id})">✏️ Modifica</button>
-      <button class="btn btn-sm cli-use" onclick="useClient(${c.id})">Usa</button>
-      <button class="cli-del" onclick="delCli(${c.id})">✕</button>
+      <button class="btn btn-sm" onclick="openStorico('${c.id}','${c.tipo}')">Storico</button>
+      <button class="btn btn-sm" onclick="editClient('${c.id}','${c.tipo}')">✏️ Modifica</button>
+      <button class="btn btn-sm cli-use" onclick="useClient('${c.id}','${c.tipo}')">Usa</button>
+      <button class="cli-del" onclick="delCli('${c.id}','${c.tipo}')">✕</button>
     </div>`).join(''):'<p class="empty"><div class="ei">👤</div>Nessun cliente.</p>';
 }
-function delCli(id){clients=clients.filter(c=>c.id!==id);savePD();renderCliList();}
-function useClient(id){
-  const c=clients.find(x=>x.id===id);if(!c)return;
+async function delCli(id,tipo){
+  const col=tipo==='azienda'?'company_id':'person_id';
+  const{error}=await supabaseClient.from('billing_profiles').delete().eq(col,id);
+  if(error){alert('Errore nell\'eliminazione: '+error.message);return;}
+  await loadClients();
+}
+function useClient(id,tipo){
+  const c=clients.find(x=>x.id===id&&x.tipo===tipo);if(!c)return;
   document.getElementById('d-cnome').value=c.nome;document.getElementById('d-cpiva').value=c.piva||'';
   document.getElementById('d-cemail').value=c.email||'';document.getElementById('d-cind').value=c.ind||'';
   document.getElementById('d-ccap').value=c.cap||'';document.getElementById('d-ccomune').value=c.comune||'';
@@ -1717,7 +1833,7 @@ function addFromPk(id,source){
 }
 function openCliPicker(){
   if(!clients.length){alert('Nessun cliente in anagrafica.');return;}
-  document.getElementById('pk-cli').innerHTML=clients.map(c=>`<div class="cli-item" style="cursor:pointer;border:1px solid var(--border);border-radius:var(--r8);margin-bottom:5px" onclick="useClient(${c.id})"><span class="cli-name">${c.nome}</span><span class="cli-info">${c.piva||''}</span></div>`).join('');
+  document.getElementById('pk-cli').innerHTML=clients.map(c=>`<div class="cli-item" style="cursor:pointer;border:1px solid var(--border);border-radius:var(--r8);margin-bottom:5px" onclick="useClient('${c.id}','${c.tipo}')"><span class="cli-name">${c.nome}</span><span class="cli-info">${c.piva||''}</span></div>`).join('');
   document.getElementById('ov-cli').classList.add('open');
 }
 function closeOv(n){document.getElementById('ov-'+n).classList.remove('open');}
@@ -2648,8 +2764,8 @@ function creaNotaCredito(id,e){
 }
 
 // ══ STORICO CLIENTE ══
-function openStorico(cliId){
-  const c=clients.find(x=>x.id===cliId);if(!c)return;
+function openStorico(cliId,tipo){
+  const c=clients.find(x=>x.id===cliId&&x.tipo===tipo);if(!c)return;
   const docsCliente=docs.filter(d=>d.cliente?.nome===c.nome);
   const totFatt=docsCliente.filter(d=>d.tipo==='fattura').reduce((s,d)=>s+d.totale,0);
   const totPagato=docsCliente.filter(d=>d.status==='pagato').reduce((s,d)=>s+d.totale,0);
@@ -2701,17 +2817,19 @@ function exportClientiCSV(){
 function importClientiCSV(e){
   const f=e.target.files[0];if(!f)return;
   const r=new FileReader();
-  r.onload=ev=>{
+  r.onload=async ev=>{
     const lines=ev.target.result.split('\n').slice(1).filter(l=>l.trim());
     let imported=0;
-    lines.forEach(line=>{
+    // Le righe CSV sono sempre trattate come clienti azienda: il formato del
+    // file (Nome, P.IVA/CF, ...) non distingue persone fisiche.
+    for(const line of lines){
       const cols=line.split(',').map(v=>v.replace(/^"|"$/g,'').replace(/""/g,'"').trim());
-      if(!cols[0])return;
-      if(clients.find(c=>c.nome===cols[0]))return; // skip duplicati
-      clients.push({id:Date.now()+imported,nome:cols[0],piva:cols[1]||'',email:cols[2]||'',ind:cols[3]||'',cap:cols[4]||'',comune:cols[5]||'',prov:cols[6]||'',codDest:cols[7]||'',pecSdi:cols[8]||''});
-      imported++;
-    });
-    savePD();renderCliList();
+      if(!cols[0])continue;
+      if(clients.find(c=>c.nome===cols[0]))continue; // skip duplicati
+      const id=await upsertClientAzienda(null,{nome:cols[0],piva:cols[1]||'',email:cols[2]||'',ind:cols[3]||'',cap:cols[4]||'',comune:cols[5]||'',prov:cols[6]||'',codDest:cols[7]||'',pecSdi:cols[8]||''});
+      if(id)imported++;
+    }
+    await loadClients();
     alert(`✓ Importati ${imported} clienti (duplicati ignorati).`);
   };
   r.readAsText(f,'UTF-8');
