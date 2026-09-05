@@ -943,8 +943,6 @@ let npLogoB64=null,npLogoMime=null,npColor=0;
 let trvTimer=null;
 
 function pk(k){return`mp_${curId}_${k}`;}
-function pg(k,d){try{return JSON.parse(localStorage.getItem(pk(k)))||d;}catch(e){return d;}}
-function ps(k,v){localStorage.setItem(pk(k),JSON.stringify(v));}
 
 // ══ AUTH ══
 function showScreen(id){
@@ -1520,7 +1518,6 @@ function editDoc(id){
 }
 
 // ══ CATALOG ══
-// ══ SHARED CATALOG (localStorage key indipendente dai profili) ══
 function toDbProduct(data){
   return{nome:data.nome,prezzo:data.prezzo,unita_misura:data.um,descrizione:data.desc,categoria:data.cat};
 }
@@ -3087,17 +3084,25 @@ function initNDA(){
     </label>`).join('');
 }
 
-function printSchedaConsulente(){
+// Dati fiscali di un emittente per Scheda Consulente/NDA: interrogati da
+// emitter_settings (Supabase), non più da mp_<pid>_settings (mai più scritta
+// dal Modulo 1 in poi — leggerla dava sempre dati vuoti).
+async function fetchEmitterById(pid){
+  const{data,error}=await supabaseClient.from('emitter_settings').select('*').eq('id',pid).single();
+  if(error||!data)return null;
+  return data;
+}
+
+async function printSchedaConsulente(){
   const checked=[...document.querySelectorAll('#scheda-checklist input:checked')].map(x=>x.value);
   if(!checked.length){showMsg('Seleziona almeno un consulente','warn');return;}
   // Logo FullyLife embedded
   const logoSrc=document.querySelector('#profile-screen img')?.src||'';
   const row=(label,val)=>val?`<tr><td style="font-weight:600;padding:4px 10px 4px 0;width:180px;color:#555;font-size:9pt;vertical-align:top">${label}</td><td style="padding:4px 0;border-bottom:1px solid #eee;font-size:9.5pt">${val}</td></tr>`:'';
-  const pages=checked.map(pid=>{
-    const s=JSON.parse(localStorage.getItem('mp_'+pid+'_settings')||'{}');
-    const p=profiles.find(x=>x.id===pid)||{};
-    const nome=s.nome||p.nome||'';
-    const indirizzoCompleto=[s.ind,[s.cap,s.comune,s.prov?'('+s.prov.toUpperCase()+')':null].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  const emitters=await Promise.all(checked.map(fetchEmitterById));
+  const pages=emitters.filter(Boolean).map(e=>{
+    const nome=e.denominazione||'';
+    const indirizzoCompleto=[e.indirizzo,[e.cap,e.comune,e.provincia?'('+e.provincia.toUpperCase()+')':null].filter(Boolean).join(' ')].filter(Boolean).join(', ');
     return`<div class="page">
       ${logoSrc?`<div style="text-align:center;margin-bottom:10mm"><img src="${logoSrc}" style="height:60px;object-fit:contain"></div>`:''}
       <h1>Scheda Consulente</h1>
@@ -3105,15 +3110,15 @@ function printSchedaConsulente(){
       <table>
         <tbody>
           ${row('Nome e cognome',nome)}
-          ${row('Codice Fiscale',s.cf||'')}
-          ${row('Partita IVA',s.piva||'')}
+          ${row('Codice Fiscale',e.codice_fiscale||'')}
+          ${row('Partita IVA',e.partita_iva||'')}
           ${row('Indirizzo',indirizzoCompleto)}
-          ${row('PEC',s.pec||'')}
-          ${row('Email',s.email||'')}
-          ${row('Telefono',s.tel||'')}
-          ${row('IBAN',s.iban||'')}
+          ${row('PEC',e.pec||'')}
+          ${row('Email',e.email||'')}
+          ${row('Telefono',e.telefono||'')}
+          ${row('IBAN',e.iban||'')}
           ${row('Regime fiscale','Regime forfettario ex art. 1 cc. 54-89 L. 190/2014')}
-          ${row('Codice ATECO',s.ateco||'')}
+          ${row('Codice ATECO',e.ateco||'')}
         </tbody>
       </table>
     </div>`;
@@ -3132,24 +3137,22 @@ function printSchedaConsulente(){
   openPrint(html);
 }
 
-function getNdaProfileData(pid){
-  try{
-    const s=JSON.parse(localStorage.getItem('mp_'+pid+'_settings')||'{}');
-    const p=profiles.find(x=>x.id===pid)||{};
-    return{
-      nome:s.nome||p.nome||'',
-      cf:s.cf||'',
-      piva:s.piva||'',
-      ind:(s.ind?s.ind+', ':'')+[s.cap,s.comune,s.prov].filter(Boolean).join(' '),
-      pec:s.pec||''
-    };
-  }catch(e){return{};}
+async function getNdaProfileData(pid){
+  const e=await fetchEmitterById(pid);
+  if(!e)return{};
+  return{
+    nome:e.denominazione||'',
+    cf:e.codice_fiscale||'',
+    piva:e.partita_iva||'',
+    ind:(e.indirizzo?e.indirizzo+', ':'')+[e.cap,e.comune,e.provincia].filter(Boolean).join(' '),
+    pec:e.pec||''
+  };
 }
 
 function fillNdaConsulente(n){/* preview only — dati usati al momento della stampa */}
 function fillNdaCliente(){/* preview only — dati usati al momento della stampa */}
 
-function printNDA(){
+async function printNDA(){
   const pid1=document.getElementById('nda-c1').value;
   const pid2=document.getElementById('nda-c2').value;
   const cliIdx=document.getElementById('nda-cli').value;
@@ -3158,8 +3161,8 @@ function printNDA(){
   if(!pid1||!pid2){showMsg('Seleziona entrambi i consulenti','warn');return;}
   if(cliIdx===''){showMsg('Seleziona il cliente','warn');return;}
 
-  const c1=getNdaProfileData(pid1);
-  const c2=getNdaProfileData(pid2);
+  const c1=await getNdaProfileData(pid1);
+  const c2=await getNdaProfileData(pid2);
   const cli=clients[parseInt(cliIdx)]||{};
   const luogo=cli.comune||'_______________';
   const dataIT=fmtDateIT(dataVal)||'_______________';
