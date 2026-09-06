@@ -16,9 +16,9 @@
 }
 body{font-family:var(--font-sans);background:var(--bg);color:var(--ink);height:100vh;margin:0;padding:0;font-size:15px;overflow:hidden}
 /* ── PROFILE SCREEN ── */
-#profile-screen,#login-screen{position:fixed;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:2rem;background:var(--bg);box-sizing:border-box;z-index:1000}
-#profile-screen h1,#login-screen h1{font-family:Georgia,'Times New Roman',serif;font-size:2rem;margin-bottom:.3rem;letter-spacing:-.02em}
-#profile-screen>p,#login-screen>p{color:var(--ink-2);font-size:.9rem;margin-bottom:2.5rem}
+#profile-screen,#login-screen,#recovery-screen{position:fixed;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:2rem;background:var(--bg);box-sizing:border-box;z-index:1000}
+#profile-screen h1,#login-screen h1,#recovery-screen h1{font-family:Georgia,'Times New Roman',serif;font-size:2rem;margin-bottom:.3rem;letter-spacing:-.02em}
+#profile-screen>p,#login-screen>p,#recovery-screen>p{color:var(--ink-2);font-size:.9rem;margin-bottom:2.5rem}
 .profiles-grid{display:flex;flex-wrap:wrap;justify-content:center;gap:12px;width:100%;max-width:680px;margin-bottom:1.5rem}
 .profile-card{background:var(--surface);border:1.5px solid var(--border);border-radius:var(--radius);padding:20px 14px 16px;cursor:pointer;transition:all .18s;text-align:center;position:relative}
 .profile-card:hover{border-color:var(--accent);box-shadow:0 4px 18px rgba(26,95,168,.13)}
@@ -194,6 +194,18 @@ textarea{resize:vertical;min-height:58px}
     <div class="field"><label>Password</label><input type="password" id="login-password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
     <div id="login-error" style="display:none;color:var(--red);font-size:.8rem"></div>
     <button class="btn btn-primary" style="justify-content:center" onclick="doLogin()">Accedi</button>
+    <a href="#" onclick="requestPasswordReset();return false" style="text-align:center;font-size:.8rem;color:var(--ink-2)">Password dimenticata?</a>
+  </div>
+</div>
+<!-- ════ RECOVERY SCREEN (reset password) ════ -->
+<div id="recovery-screen" style="display:none">
+  <h1 style="font-family:Georgia,serif;font-size:1.6rem;letter-spacing:.08em;text-transform:uppercase;margin-bottom:.3rem">Gestionale</h1>
+  <p>Imposta una nuova password</p>
+  <div style="width:100%;max-width:320px;display:flex;flex-direction:column;gap:12px">
+    <div class="field"><label>Nuova password</label><input type="password" id="recovery-password" autocomplete="new-password"></div>
+    <div class="field"><label>Conferma password</label><input type="password" id="recovery-password2" autocomplete="new-password" onkeydown="if(event.key==='Enter')setNewPassword()"></div>
+    <div id="recovery-error" style="display:none;color:var(--red);font-size:.8rem"></div>
+    <button class="btn btn-primary" style="justify-content:center" onclick="setNewPassword()">Imposta password</button>
   </div>
 </div>
 <!-- ════ PROFILE SCREEN ════ -->
@@ -237,6 +249,7 @@ textarea{resize:vertical;min-height:58px}
     <div class="nav-label">Profilo</div>
     <button class="nav-item" onclick="goTo('impostazioni')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93A10 10 0 004.93 19.07M19.07 4.93l-1.41 1.41M4.93 19.07l1.41-1.41M19.07 19.07A10 10 0 004.93 4.93M19.07 19.07l-1.41-1.41M4.93 4.93l1.41 1.41"/></svg>Impostazioni</button>
     <button class="nav-item" onclick="goTo('backup')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Backup &amp; Ripristino</button>
+    <button class="nav-item" id="nav-utenti" onclick="goTo('utenti')" style="display:none"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>Gestione utenti</button>
   </div>
 </nav>
 <main class="content">
@@ -846,6 +859,77 @@ textarea{resize:vertical;min-height:58px}
   </div>
 </div>
 
+<!-- GESTIONE UTENTI (solo admin) -->
+<div id="sec-utenti" class="section">
+  <div class="topbar"><h2>Gestione utenti</h2></div>
+
+  <div class="card">
+    <div class="card-head"><div class="hl"><div class="ci">👤</div><div><h3>Utenti</h3><p>Ruolo, permesso di fatturazione e stato di ciascuno</p></div></div></div>
+    <div class="card-body">
+      <div id="utenti-list" style="display:flex;flex-direction:column;gap:6px"></div>
+    </div>
+  </div>
+
+  <div class="card" id="utente-edit-card" style="display:none">
+    <div class="card-head"><div class="hl"><div class="ci">✏️</div><div><h3 id="utente-edit-title">Modifica utente</h3></div></div></div>
+    <div class="card-body">
+      <div class="grid2" style="margin-bottom:11px">
+        <div class="field"><label>Nome</label><input type="text" id="ut-nome"></div>
+        <div class="field"><label>Cognome</label><input type="text" id="ut-cognome"></div>
+        <div class="field"><label>Email</label><input type="email" id="ut-email"></div>
+        <div class="field"><label>Ruolo</label>
+          <select id="ut-ruolo">
+            <option value="consulente_limitato">Consulente limitato</option>
+            <option value="consulente">Consulente</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;gap:20px;margin-bottom:11px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:.85rem"><input type="checkbox" id="ut-fatturare"> Può fatturare</label>
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:.85rem"><input type="checkbox" id="ut-attivo"> Attivo</label>
+      </div>
+      <p style="font-size:.78rem;color:var(--ink-2);background:var(--bg);border:1px solid var(--border);border-radius:var(--r8);padding:9px 12px;margin-bottom:14px">
+        ⚠️ "Attivo" da solo <strong>non</strong> revoca l'accesso alla fatturazione: <code>can_bill()</code> controlla solo "Può fatturare". Per togliere davvero l'accesso alla fatturazione, disattiva anche quello.
+      </p>
+      <div style="display:flex;gap:8px;margin-bottom:6px">
+        <button class="btn btn-primary" onclick="saveUtente()">Salva modifiche</button>
+        <button class="btn btn-sm" onclick="cancelEditUtente()">Annulla</button>
+      </div>
+
+      <div class="sep"></div>
+      <p style="font-size:.7rem;font-weight:600;color:var(--ink-2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Emittenti collegati</p>
+      <p style="font-size:.78rem;color:var(--ink-2);margin-bottom:10px">Un utente con ruolo admin può comunque usare tutti gli emittenti — questo collegamento conta solo per gli altri ruoli.</p>
+      <div id="utente-emitters-list" style="display:flex;flex-direction:column;gap:5px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <select id="ut-add-emitter" style="flex:1"></select>
+        <button class="btn btn-sm btn-primary" onclick="addOperatorEmitter()" style="flex-shrink:0">Collega</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><div class="hl"><div class="ci">➕</div><div><h3>Aggiungi utente</h3><p>Per un account già creato in Dashboard → Authentication → Users — non esiste un trigger automatico che crei questa riga da solo</p></div></div></div>
+    <div class="card-body">
+      <div class="grid2" style="margin-bottom:11px">
+        <div class="field span2"><label>UUID (copiato dal Dashboard Supabase)</label><input type="text" id="nu-id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></div>
+        <div class="field"><label>Nome</label><input type="text" id="nu-nome"></div>
+        <div class="field"><label>Cognome</label><input type="text" id="nu-cognome"></div>
+        <div class="field"><label>Email</label><input type="email" id="nu-email"></div>
+        <div class="field"><label>Ruolo</label>
+          <select id="nu-ruolo">
+            <option value="consulente_limitato">Consulente limitato</option>
+            <option value="consulente">Consulente</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+      </div>
+      <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:.85rem;margin-bottom:14px"><input type="checkbox" id="nu-fatturare"> Può fatturare</label>
+      <button class="btn btn-primary" onclick="createUtente()">Crea riga utente</button>
+    </div>
+  </div>
+</div>
+
 </main></div></div><!-- /app-shell -->
 
 <!-- MODALS -->
@@ -946,8 +1030,30 @@ function pk(k){return`mp_${curId}_${k}`;}
 
 // ══ AUTH ══
 function showScreen(id){
-  ['login-screen','profile-screen'].forEach(s=>{document.getElementById(s).style.display=s===id?'flex':'none';});
+  ['login-screen','recovery-screen','profile-screen'].forEach(s=>{document.getElementById(s).style.display=s===id?'flex':'none';});
   document.getElementById('app-shell').style.visibility=id==='app-shell'?'visible':'hidden';
+}
+async function requestPasswordReset(){
+  const email=document.getElementById('login-email').value.trim();
+  const errEl=document.getElementById('login-error');
+  errEl.style.display='none';
+  if(!email){errEl.textContent='Inserisci la tua email qui sopra, poi clicca di nuovo su "Password dimenticata?".';errEl.style.display='block';return;}
+  const{error}=await supabaseClient.auth.resetPasswordForEmail(email,{redirectTo:window.location.origin+window.location.pathname});
+  if(error){errEl.textContent='Errore: '+error.message;errEl.style.display='block';return;}
+  alert('Email di reset inviata a '+email+'. Apri il link ricevuto (controlla anche lo spam) entro pochi minuti: ti riporterà qui per impostare la nuova password.');
+}
+async function setNewPassword(){
+  const p1=document.getElementById('recovery-password').value;
+  const p2=document.getElementById('recovery-password2').value;
+  const errEl=document.getElementById('recovery-error');
+  errEl.style.display='none';
+  if(p1.length<6){errEl.textContent='La password deve avere almeno 6 caratteri.';errEl.style.display='block';return;}
+  if(p1!==p2){errEl.textContent='Le due password non coincidono.';errEl.style.display='block';return;}
+  const{error}=await supabaseClient.auth.updateUser({password:p1});
+  if(error){errEl.textContent='Errore: '+error.message;errEl.style.display='block';return;}
+  await supabaseClient.auth.signOut();
+  showScreen('login-screen');
+  alert('Password aggiornata. Accedi con la nuova password.');
 }
 async function doLogin(){
   const email=document.getElementById('login-email').value.trim();
@@ -961,12 +1067,22 @@ async function doLogin(){
 }
 async function doLogout(){
   await supabaseClient.auth.signOut();
-  curId=null;curEmitter=null;profiles=[];
+  curId=null;curEmitter=null;profiles=[];isAdmin=false;
+  document.getElementById('nav-utenti').style.display='none';
   showScreen('login-screen');
 }
 async function afterLogin(){
+  isAdmin=await checkIsAdmin();
+  document.getElementById('nav-utenti').style.display=isAdmin?'':'none';
   showScreen('profile-screen');
   await renderPS();
+}
+let isAdmin=false;
+async function checkIsAdmin(){
+  const{data:{user}}=await supabaseClient.auth.getUser();
+  if(!user)return false;
+  const{data}=await supabaseClient.from('app_users').select('ruolo').eq('id',user.id).maybeSingle();
+  return data?.ruolo==='admin';
 }
 async function checkSession(){
   const {data}=await supabaseClient.auth.getSession();
@@ -974,7 +1090,14 @@ async function checkSession(){
   else{showScreen('login-screen');}
 }
 supabaseClient.auth.onAuthStateChange((event)=>{
-  if(event==='SIGNED_OUT'){curId=null;curEmitter=null;profiles=[];showScreen('login-screen');}
+  if(event==='SIGNED_OUT'){
+    curId=null;curEmitter=null;profiles=[];isAdmin=false;
+    document.getElementById('nav-utenti').style.display='none';
+    showScreen('login-screen');
+  }
+  if(event==='PASSWORD_RECOVERY'){
+    showScreen('recovery-screen');
+  }
 });
 function mapEmitterToSettings(e){
   if(!e)return{prefPrev:'PREV',prefFatt:'FATT',prefProforma:'PRF',anno:new Date().getFullYear()};
@@ -1236,6 +1359,7 @@ function goTo(s){
   if(s==='clienti') renderCliList();
   if(s==='legali') initNDA();
   if(s==='impostazioni') loadSF();
+  if(s==='utenti') renderUtenti();
 }
 
 // ══ TOAST ══
@@ -3278,8 +3402,118 @@ async function printNDA(){
   openPrint(html);
 }
 
+// ══ GESTIONE UTENTI (admin) ══
+let utenti=[],editUtenteId=null;
+async function renderUtenti(){
+  const{data,error}=await supabaseClient.from('app_users').select('*').order('nome').order('cognome');
+  if(error){alert('Errore nel caricamento utenti: '+error.message);return;}
+  utenti=data||[];
+  document.getElementById('utenti-list').innerHTML=utenti.length?utenti.map(u=>`
+    <div class="cli-item">
+      <span class="cli-name">${u.nome||''} ${u.cognome||''}</span>
+      <span class="cli-info">${u.email||''} · ${u.ruolo}${u.puo_fatturare?' · può fatturare':''}${u.attivo?'':' · disattivo'}</span>
+      <button class="btn btn-sm" onclick="selectUtente('${u.id}')">Gestisci</button>
+    </div>`).join(''):'<p class="empty"><div class="ei">👤</div>Nessun utente.</p>';
+}
+async function selectUtente(id){
+  const u=utenti.find(x=>x.id===id);if(!u)return;
+  editUtenteId=id;
+  document.getElementById('utente-edit-title').textContent='Modifica: '+(u.nome||'')+' '+(u.cognome||'');
+  document.getElementById('ut-nome').value=u.nome||'';
+  document.getElementById('ut-cognome').value=u.cognome||'';
+  document.getElementById('ut-email').value=u.email||'';
+  document.getElementById('ut-ruolo').value=u.ruolo;
+  document.getElementById('ut-fatturare').checked=!!u.puo_fatturare;
+  document.getElementById('ut-attivo').checked=!!u.attivo;
+  document.getElementById('utente-edit-card').style.display='';
+  await loadUtenteEmitters(id);
+  document.getElementById('utente-edit-card').scrollIntoView({behavior:'smooth',block:'start'});
+}
+function cancelEditUtente(){
+  editUtenteId=null;
+  document.getElementById('utente-edit-card').style.display='none';
+}
+async function saveUtente(){
+  if(!editUtenteId)return;
+  const payload={
+    nome:document.getElementById('ut-nome').value.trim(),
+    cognome:document.getElementById('ut-cognome').value.trim(),
+    email:document.getElementById('ut-email').value.trim(),
+    ruolo:document.getElementById('ut-ruolo').value,
+    puo_fatturare:document.getElementById('ut-fatturare').checked,
+    attivo:document.getElementById('ut-attivo').checked
+  };
+  const{error}=await supabaseClient.from('app_users').update(payload).eq('id',editUtenteId);
+  if(error){alert('Errore nel salvataggio: '+error.message);return;}
+  await renderUtenti();
+  cancelEditUtente();
+  showToast();
+}
+async function loadUtenteEmitters(uid){
+  const[linksRes,allRes]=await Promise.all([
+    supabaseClient.from('operator_emitter').select('id,emitter_id,emitter_settings(denominazione)').eq('operator_id',uid),
+    supabaseClient.from('emitter_settings').select('id,denominazione').order('denominazione')
+  ]);
+  const links=linksRes.data||[],tutti=allRes.data||[];
+  document.getElementById('utente-emitters-list').innerHTML=links.length?links.map(l=>`
+    <div class="cli-item">
+      <span class="cli-name">${l.emitter_settings?.denominazione||l.emitter_id}</span>
+      <button class="cli-del" onclick="removeOperatorEmitter('${l.id}')">✕</button>
+    </div>`).join(''):'<p style="font-size:.8rem;color:var(--ink-3)">Nessun collegamento.</p>';
+  const collegatiIds=new Set(links.map(l=>l.emitter_id));
+  const disponibili=tutti.filter(e=>!collegatiIds.has(e.id));
+  const sel=document.getElementById('ut-add-emitter');
+  sel.innerHTML=disponibili.length?disponibili.map(e=>`<option value="${e.id}">${e.denominazione}</option>`).join(''):'<option value="">Nessun altro emittente</option>';
+}
+async function addOperatorEmitter(){
+  if(!editUtenteId)return;
+  const emitterId=document.getElementById('ut-add-emitter').value;
+  if(!emitterId)return;
+  const{error}=await supabaseClient.from('operator_emitter').insert({operator_id:editUtenteId,emitter_id:emitterId});
+  if(error){alert('Errore nel collegamento: '+error.message);return;}
+  await loadUtenteEmitters(editUtenteId);
+}
+async function removeOperatorEmitter(linkId){
+  const{error}=await supabaseClient.from('operator_emitter').delete().eq('id',linkId);
+  if(error){alert('Errore nella rimozione: '+error.message);return;}
+  await loadUtenteEmitters(editUtenteId);
+}
+async function createUtente(){
+  const id=document.getElementById('nu-id').value.trim();
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)){alert('UUID non valido. Copialo dal Dashboard Supabase → Authentication → Users.');return;}
+  const payload={
+    id,
+    nome:document.getElementById('nu-nome').value.trim(),
+    cognome:document.getElementById('nu-cognome').value.trim(),
+    email:document.getElementById('nu-email').value.trim(),
+    ruolo:document.getElementById('nu-ruolo').value,
+    puo_fatturare:document.getElementById('nu-fatturare').checked,
+    attivo:true
+  };
+  const{error}=await supabaseClient.from('app_users').insert(payload);
+  if(error){
+    alert('Errore nella creazione: '+error.message+(error.code==='23505'?'\n\nQuesto utente esiste già: usa "Gestisci" dalla lista sopra invece di ricrearlo.':''));
+    return;
+  }
+  ['nu-id','nu-nome','nu-cognome','nu-email'].forEach(f=>document.getElementById(f).value='');
+  document.getElementById('nu-fatturare').checked=false;
+  document.getElementById('nu-ruolo').value='consulente_limitato';
+  await renderUtenti();
+  showToast();
+}
+
 // ══ INIT ══
-checkSession();
+// Se l'URL arriva da un link di reset password, non lanciare il normale
+// controllo sessione: mostrerebbe la schermata profili in una gara con
+// l'evento PASSWORD_RECOVERY (già intercettato sopra). Mostriamo comunque
+// subito la schermata di reset (non solo tramite l'evento): se per
+// qualunque motivo la sessione di recovery non si stabilisce, l'utente
+// vede comunque il form e un errore chiaro al submit, non una pagina vuota.
+if(location.hash.includes('type=recovery')){
+  showScreen('recovery-screen');
+} else {
+  checkSession();
+}
 </script>
 <div id="toast">✓ Salvato</div>
 </body>
