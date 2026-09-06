@@ -62,6 +62,9 @@ create table public.emitter_settings (
     prefisso_nota       text default 'NC',
     riferimento_normativo text default 'Operazione in regime forfettario ex art. 1 cc. 54-89 L. 190/2014',
     footer          text,
+    -- indirizzo PEC a cui inviare l'XML allo SdI: l'Agenzia delle Entrate lo
+    -- cambia periodicamente, va configurabile invece che hardcoded nel frontend
+    email_sdi       text default 'sdi01@pec.fatturapa.it',
     -- previsione fiscale
     aliquota_irpef  numeric(5,2) default 5,
     aliquota_inps   numeric(5,2) default 26.23,

@@ -663,6 +663,7 @@ textarea{resize:vertical;min-height:58px}
           </select>
         </div>
         <div class="field"><label>Riferimento normativo IVA 0%</label><input type="text" id="s-rifnorm" placeholder="Art. 1 cc. 54-89 L. 190/2014"></div>
+        <div class="field"><label>Email invio XML a SDI</label><input type="email" id="s-emailsdi" placeholder="sdi01@pec.fatturapa.it"><span style="font-size:.7rem;color:var(--ink-3)">Cambia periodicamente: aggiornala quando l'Agenzia delle Entrate comunica il nuovo indirizzo</span></div>
       </div>
       <div class="field"><label>Testo piè di pagina PDF (regime, ritenuta…)</label><textarea id="s-footer" rows="2"></textarea></div>
     </div>
@@ -1109,6 +1110,7 @@ function mapEmitterToSettings(e){
     prefPrev:e.prefisso_preventivo||'PREV',prefFatt:e.prefisso_fattura||'FATT',prefProforma:e.prefisso_proforma||'PRF',
     anno:new Date().getFullYear(),
     regimeFiscale:e.regime_fiscale||'RF19',riferimentoNormativo:e.riferimento_normativo||'',
+    emailSdi:e.email_sdi||'sdi01@pec.fatturapa.it',
     irpef:e.aliquota_irpef??5,inps:e.aliquota_inps??26.23,coeff:e.coeff_redditivita??78,
     ateco:e.ateco||'',acconto:e.acconto||0,color:e.color_index||0
   };
@@ -2041,6 +2043,7 @@ function loadSF(){
   document.getElementById('s-anno').value=settings.anno||new Date().getFullYear();
   document.getElementById('s-regime').value=settings.regimeFiscale||'RF19';
   document.getElementById('s-rifnorm').value=settings.riferimentoNormativo||'';
+  document.getElementById('s-emailsdi').value=settings.emailSdi||'sdi01@pec.fatturapa.it';
   // Fiscale
   document.getElementById('s-irpef').value=settings.irpef??15;
   document.getElementById('s-inps').value=settings.inps??26.23;
@@ -2079,6 +2082,7 @@ async function saveSettings(){
   settings.anno=document.getElementById('s-anno').value||new Date().getFullYear();
   settings.regimeFiscale=document.getElementById('s-regime').value||'RF19';
   settings.riferimentoNormativo=document.getElementById('s-rifnorm').value;
+  settings.emailSdi=document.getElementById('s-emailsdi').value.trim()||'sdi01@pec.fatturapa.it';
   settings.irpef=parseFloat(document.getElementById('s-irpef').value)||15;
   settings.inps=parseFloat(document.getElementById('s-inps').value)||26.23;
   settings.coeff=parseFloat(document.getElementById('s-coeff').value)||78;
@@ -2099,6 +2103,7 @@ async function saveSettings(){
     footer:settings.footer,
     prefisso_preventivo:settings.prefPrev,prefisso_fattura:settings.prefFatt,prefisso_proforma:settings.prefProforma,
     regime_fiscale:settings.regimeFiscale,riferimento_normativo:settings.riferimentoNormativo,
+    email_sdi:settings.emailSdi,
     aliquota_irpef:settings.irpef,aliquota_inps:settings.inps,coeff_redditivita:settings.coeff,
     ateco:settings.ateco,acconto:settings.acconto,color_index:settings.color
   };
@@ -2612,7 +2617,7 @@ Il file è stato salvato in: ${folderHandle.name}
 Cordiali saluti,
 ${settings.nome||''}`.trim()
       );
-      setTimeout(()=>{ window.location.href=`mailto:sdi01@pec.fatturapa.it?subject=${oggetto}&body=${corpo}`; },800);
+      setTimeout(()=>{ window.location.href=`mailto:${settings.emailSdi||'sdi01@pec.fatturapa.it'}?subject=${oggetto}&body=${corpo}`; },800);
       return;
     }catch(err){
       if(err.name!=='AbortError') console.warn('Folder write failed, falling back',err);
@@ -2640,7 +2645,7 @@ in allegato il file XML della fattura elettronica:
 Cordiali saluti,
 ${settings.nome||''}`.trim()
     );
-    const mailtoLink=`mailto:sdi01@pec.fatturapa.it?subject=${oggetto}&body=${corpo}`;
+    const mailtoLink=`mailto:${settings.emailSdi||'sdi01@pec.fatturapa.it'}?subject=${oggetto}&body=${corpo}`;
     window.location.href=mailtoLink;
   }, 800); // piccolo delay per far partire prima il download
 }
@@ -2692,7 +2697,7 @@ async function exportBackup(){
       provincia:curEmitter.provincia,email:curEmitter.email,pec:curEmitter.pec,telefono:curEmitter.telefono,iban:curEmitter.iban,
       ateco:curEmitter.ateco,prefisso_preventivo:curEmitter.prefisso_preventivo,prefisso_fattura:curEmitter.prefisso_fattura,
       prefisso_proforma:curEmitter.prefisso_proforma,prefisso_nota:curEmitter.prefisso_nota,
-      riferimento_normativo:curEmitter.riferimento_normativo,footer:curEmitter.footer,
+      riferimento_normativo:curEmitter.riferimento_normativo,footer:curEmitter.footer,email_sdi:curEmitter.email_sdi,
       aliquota_irpef:curEmitter.aliquota_irpef,aliquota_inps:curEmitter.aliquota_inps,coeff_redditivita:curEmitter.coeff_redditivita,
       acconto:curEmitter.acconto,role_label:curEmitter.role_label,color_index:curEmitter.color_index
     },
