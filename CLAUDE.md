@@ -13,9 +13,13 @@ I sei domini (cornice completa, per orientarsi — non tutti attivi qui):
 2. Profilazione SPP (GESPP) — dati sanitari
 3. Percezione appartenenza al gruppo (PAG)
 4. Benessere psicosociale (MCS/MCSR)
-5. Calendario (Calendar Work) — **integrato in questo repo** (tab "Calendario",
-   dal 2026-09-08), non più un modulo separato futuro: pianificazione attività
-   per consulente, condivisa per taggatura (tabelle `wc_*`, vedi sotto)
+5. Calendario (Calendar Work) — **integrato nel repo GESPP** (tab "Le mie
+   attività", dal 2026-09-08), non in questo repo: il gestionale richiede di
+   selezionare un emittente fiscale prima di mostrare qualunque schermata, e
+   quella selezione richiede `can_bill()` — un consulente senza
+   `puo_fatturare=true` non riuscirebbe mai a vederlo qui. GESPP invece mostra
+   i suoi tab a qualunque `app_users` attivo, senza cancelli simili. A
+   differenza degli altri domini della lista, questo HA già una sede reale.
 6. Prenotazione slot (slot-booking)
 
 Disciplina: **"pensiamo a sei, costruiamo a uno"**. Lo schema è pensato per
@@ -68,23 +72,28 @@ tabelle sanitarie, va verificata dopo ogni cambiamento qui.
 Cosa **non** cambia: la logica di generazione XML FatturaPA (frontend) resta
 invariata — qui si modella *dove* stanno i dati, non *come* si genera l'XML.
 
-## Work Calendar (dominio 5, integrato qui)
+## Work Calendar (dominio 5 — vive nel repo GESPP, non qui)
 
-Tab "Calendario" dentro `gestionale_fullylife.html`, migrato da un'app
-locale a sé (work_calendar.html, solo localStorage) alle tabelle `wc_*` di
-`gestionale_schema.sql` (sezione 10). Modello: ogni consulente ha il proprio
-calendario privato (`owner_id`); un task può taggare altri consulenti reali
-(`app_users`, non più profili "operatore" liberi) come collaboratori — chi è
-taggato entra nel "team" di quel task e può vederlo, leggere/scrivere un log
-di aggiornamenti condivisi (`wc_task_updates`), cambiare lo stato dei
-subtask a cui è specificamente assegnato. Struttura/proprietà del task
-restano del proprietario. Funzione centrale: `wc_can_see_task(task_id)`.
+Migrato da un'app locale a sé (`work_calendar.html`, solo localStorage) a
+tab "Le mie attività" dentro `spp_dashboard.html` (repo GESPP), sulle tabelle
+`wc_*` — documentate in `gespp_1_schema.sql`/`gespp_2_funzioni_policy.sql`
+di quel repo, non più in `gestionale_schema.sql`. Modello: ogni consulente ha
+il proprio calendario privato (`owner_id`); un task può taggare altri
+consulenti reali (`app_users`, non più profili "operatore" liberi) come
+collaboratori — chi è taggato entra nel "team" di quel task e può vederlo,
+leggere/scrivere un log di aggiornamenti condivisi (`wc_task_updates`),
+cambiare lo stato dei subtask a cui è specificamente assegnato.
+Struttura/proprietà del task restano del proprietario. Funzione centrale:
+`wc_can_see_task(task_id)`. Vive brevemente su questo repo il 2026-09-08
+(tab "Calendario" in `gestionale_fullylife.html`) prima di essere spostato
+qui — vedi la motivazione del punto 5 della lista dei domini sopra.
 
 ### Ordine di lavoro
 0. [FATTO] Decisioni architetturali + schema SQL strato fatturazione.
 1. [FATTO] Migrare il gestionale da localStorage a Supabase (query al posto
    dello storage, logica XML invariata).
-2. [FATTO] Work Calendar integrato come tab di questo repo (vedi sopra).
+2. [FATTO, ma fuori da questo repo] Work Calendar integrato in GESPP (vedi
+   sopra) — non più lavoro di questo repo dopo lo spostamento del 2026-09-08.
 3. (Fuori da questo repo, più avanti) portale unificato con login condiviso
    tra gestionale/GESPP/slot-booking — richiede prima di pubblicare questo
    repo su GitHub Pages (oggi privato, non ancora deciso).
