@@ -13,7 +13,9 @@ I sei domini (cornice completa, per orientarsi — non tutti attivi qui):
 2. Profilazione SPP (GESPP) — dati sanitari
 3. Percezione appartenenza al gruppo (PAG)
 4. Benessere psicosociale (MCS/MCSR)
-5. Calendario (Calendar Work)
+5. Calendario (Calendar Work) — **integrato in questo repo** (tab "Calendario",
+   dal 2026-09-08), non più un modulo separato futuro: pianificazione attività
+   per consulente, condivisa per taggatura (tabelle `wc_*`, vedi sotto)
 6. Prenotazione slot (slot-booking)
 
 Disciplina: **"pensiamo a sei, costruiamo a uno"**. Lo schema è pensato per
@@ -66,9 +68,23 @@ tabelle sanitarie, va verificata dopo ogni cambiamento qui.
 Cosa **non** cambia: la logica di generazione XML FatturaPA (frontend) resta
 invariata — qui si modella *dove* stanno i dati, non *come* si genera l'XML.
 
+## Work Calendar (dominio 5, integrato qui)
+
+Tab "Calendario" dentro `gestionale_fullylife.html`, migrato da un'app
+locale a sé (work_calendar.html, solo localStorage) alle tabelle `wc_*` di
+`gestionale_schema.sql` (sezione 10). Modello: ogni consulente ha il proprio
+calendario privato (`owner_id`); un task può taggare altri consulenti reali
+(`app_users`, non più profili "operatore" liberi) come collaboratori — chi è
+taggato entra nel "team" di quel task e può vederlo, leggere/scrivere un log
+di aggiornamenti condivisi (`wc_task_updates`), cambiare lo stato dei
+subtask a cui è specificamente assegnato. Struttura/proprietà del task
+restano del proprietario. Funzione centrale: `wc_can_see_task(task_id)`.
+
 ### Ordine di lavoro
 0. [FATTO] Decisioni architetturali + schema SQL strato fatturazione.
-1. Migrare il gestionale da localStorage a Supabase (query al posto dello
-   storage, logica XML invariata).
-2. (Fuori da questo repo, più avanti) migrare Calendar Work, poi portale
-   unificato.
+1. [FATTO] Migrare il gestionale da localStorage a Supabase (query al posto
+   dello storage, logica XML invariata).
+2. [FATTO] Work Calendar integrato come tab di questo repo (vedi sopra).
+3. (Fuori da questo repo, più avanti) portale unificato con login condiviso
+   tra gestionale/GESPP/slot-booking — richiede prima di pubblicare questo
+   repo su GitHub Pages (oggi privato, non ancora deciso).

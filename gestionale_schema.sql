@@ -537,7 +537,218 @@ $$;
 grant execute on function public.emittenti_disponibili() to authenticated;
 
 -- ============================================================================
---  FINE STRATO FATTURAZIONE.
+-- 10. WORK CALENDAR — pianificazione attività per consulente, condivisa per
+--     taggatura (dominio "Calendario/Calendar Work" della cornice a sei,
+--     integrato qui invece che come modulo a parte — vedi CLAUDE.md).
+--
+--     Modello: ogni consulente ha il proprio calendario privato (task,
+--     backlog, categorie) — owner_id. Un task può taggare altri consulenti
+--     come "operatori": chi è taggato (sul task o su un suo subtask) entra
+--     a far parte del "team" di quel task e può vederlo, vedere gli altri
+--     taggati, leggere/scrivere aggiornamenti condivisi (wc_task_updates).
+--     Cambiare lo stato di un subtask è riservato a chi è taggato su
+--     QUEL subtask specifico, non all'intero team del task. Struttura e
+--     proprietà del task (nome/data/punti/taggature) restano del
+--     proprietario.
+-- ----------------------------------------------------------------------------
+
+create table public.wc_categories (
+    id         uuid primary key default gen_random_uuid(),
+    owner_id   uuid not null references public.app_users(id) on delete cascade,
+    nome       text not null,
+    colore     text not null default '#7c6fcd',
+    created_at timestamptz not null default now()
+);
+
+create table public.wc_backlog (
+    id           uuid primary key default gen_random_uuid(),
+    owner_id     uuid not null references public.app_users(id) on delete cascade,
+    nome         text not null,
+    pts          integer not null default 5,
+    categoria_id uuid references public.wc_categories(id) on delete set null,
+    note         text,
+    created_at   timestamptz not null default now()
+);
+
+create table public.wc_tasks (
+    id              uuid primary key default gen_random_uuid(),
+    owner_id        uuid not null references public.app_users(id) on delete cascade,
+    nome            text not null,
+    data            date not null,
+    pts             integer not null default 5,
+    categoria_id    uuid references public.wc_categories(id) on delete set null,
+    stato           text not null default 'todo' check (stato in ('todo','doing','done')),
+    ricorrenza      text not null default 'none' check (ricorrenza in ('none','daily','weekly','monthly')),
+    ricorrenza_fine date,
+    note            text,
+    -- collegamento al backlog di provenienza, se pianificato da lì
+    -- (una direzione sola: "è pianificato?" si deduce cercando se un task
+    -- referenzia questo backlog_id, non serve il puntatore inverso)
+    backlog_id      uuid references public.wc_backlog(id) on delete set null,
+    created_at      timestamptz not null default now(),
+    updated_at      timestamptz not null default now()
+);
+create index idx_wc_tasks_owner on public.wc_tasks(owner_id);
+create index idx_wc_tasks_data  on public.wc_tasks(data);
+
+create table public.wc_task_operators (
+    task_id     uuid not null references public.wc_tasks(id) on delete cascade,
+    operator_id uuid not null references public.app_users(id) on delete cascade,
+    primary key (task_id, operator_id)
+);
+
+create table public.wc_subtasks (
+    id         uuid primary key default gen_random_uuid(),
+    task_id    uuid not null references public.wc_tasks(id) on delete cascade,
+    nome       text not null,
+    pts        integer default 0,
+    stato      text not null default 'todo' check (stato in ('todo','doing','done')),
+    ordine     integer not null default 0,
+    created_at timestamptz not null default now()
+);
+create index idx_wc_subtasks_task on public.wc_subtasks(task_id);
+
+create table public.wc_subtask_operators (
+    subtask_id  uuid not null references public.wc_subtasks(id) on delete cascade,
+    operator_id uuid not null references public.app_users(id) on delete cascade,
+    primary key (subtask_id, operator_id)
+);
+
+-- Log condiviso di aggiornamenti sul task, visibile e scrivibile da tutto
+-- il team (proprietario + taggati), non solo dal proprietario.
+create table public.wc_task_updates (
+    id         uuid primary key default gen_random_uuid(),
+    task_id    uuid not null references public.wc_tasks(id) on delete cascade,
+    author_id  uuid not null references public.app_users(id) on delete cascade,
+    testo      text not null,
+    created_at timestamptz not null default now()
+);
+create index idx_wc_updates_task on public.wc_task_updates(task_id);
+
+-- ----------------------------------------------------------------------------
+-- Chi fa parte del "team" di un task: il proprietario, chi è taggato sul
+-- task, chi è taggato su uno dei suoi subtask. security definer perché
+-- valutata dentro le policy di più tabelle diverse (stesso motivo di
+-- can_access_person in GESPP: evita di dover dare grant incrociati fra le
+-- tabelle wc_* solo per farle leggere l'un l'altra durante la valutazione
+-- della RLS).
+-- ----------------------------------------------------------------------------
+create or replace function public.wc_can_see_task(p_task_id uuid)
+returns boolean language sql stable security definer set search_path = public
+as $$
+    select exists(
+        select 1 from public.wc_tasks t
+        where t.id = p_task_id
+          and (
+            t.owner_id = auth.uid()
+            or public.is_admin()
+            or exists(select 1 from public.wc_task_operators o where o.task_id = t.id and o.operator_id = auth.uid())
+            or exists(
+                select 1 from public.wc_subtasks s
+                join public.wc_subtask_operators so on so.subtask_id = s.id
+                where s.task_id = t.id and so.operator_id = auth.uid()
+            )
+          )
+    );
+$$;
+grant execute on function public.wc_can_see_task(uuid) to authenticated;
+
+-- ----------------------------------------------------------------------------
+-- RLS
+-- ----------------------------------------------------------------------------
+alter table public.wc_categories        enable row level security;
+alter table public.wc_backlog           enable row level security;
+alter table public.wc_tasks             enable row level security;
+alter table public.wc_task_operators    enable row level security;
+alter table public.wc_subtasks          enable row level security;
+alter table public.wc_subtask_operators enable row level security;
+alter table public.wc_task_updates      enable row level security;
+
+-- categorie/backlog: solo il proprietario, calendario privato come oggi.
+create policy wc_categories_owner on public.wc_categories
+    for all to authenticated using (owner_id = auth.uid() or public.is_admin())
+    with check (owner_id = auth.uid() or public.is_admin());
+create policy wc_backlog_owner on public.wc_backlog
+    for all to authenticated using (owner_id = auth.uid() or public.is_admin())
+    with check (owner_id = auth.uid() or public.is_admin());
+
+-- Il team di un task deve poter leggere nome/colore delle categorie usate
+-- da quel task — non l'intero elenco categorie del proprietario, solo
+-- quelle effettivamente referenziate da un task che può vedere. Sola
+-- lettura: nessuna policy di scrittura aggiuntiva, resta owner-only.
+create policy wc_categories_team_read on public.wc_categories
+    for select to authenticated using (
+        exists(select 1 from public.wc_tasks t where t.categoria_id = wc_categories.id and public.wc_can_see_task(t.id))
+    );
+
+-- task: il proprietario ha pieno controllo; il team lo vede soltanto —
+-- nessuna policy di update/delete per i taggati sulla riga task stessa,
+-- la struttura resta del proprietario.
+create policy wc_tasks_owner_all on public.wc_tasks
+    for all to authenticated using (owner_id = auth.uid() or public.is_admin())
+    with check (owner_id = auth.uid() or public.is_admin());
+create policy wc_tasks_team_read on public.wc_tasks
+    for select to authenticated using (public.wc_can_see_task(id));
+
+-- taggature: il proprietario del task le gestisce; il team vede chi altro
+-- è taggato (utile per sapere con chi si sta collaborando).
+create policy wc_task_operators_owner_write on public.wc_task_operators
+    for all to authenticated using (
+        exists(select 1 from public.wc_tasks t where t.id = task_id and (t.owner_id = auth.uid() or public.is_admin()))
+    ) with check (
+        exists(select 1 from public.wc_tasks t where t.id = task_id and (t.owner_id = auth.uid() or public.is_admin()))
+    );
+create policy wc_task_operators_team_read on public.wc_task_operators
+    for select to authenticated using (public.wc_can_see_task(task_id));
+
+-- subtask: il proprietario del task ha pieno controllo (struttura,
+-- creazione, cancellazione). Il team lo vede in lettura. Lo stato invece
+-- lo può cambiare solo chi è taggato su QUEL subtask specifico (non tutto
+-- il team del task) — coerente con "aggiornamenti sulla propria parte".
+create policy wc_subtasks_owner_all on public.wc_subtasks
+    for all to authenticated using (
+        exists(select 1 from public.wc_tasks t where t.id = task_id and (t.owner_id = auth.uid() or public.is_admin()))
+    ) with check (
+        exists(select 1 from public.wc_tasks t where t.id = task_id and (t.owner_id = auth.uid() or public.is_admin()))
+    );
+create policy wc_subtasks_team_read on public.wc_subtasks
+    for select to authenticated using (public.wc_can_see_task(task_id));
+create policy wc_subtasks_assigned_update on public.wc_subtasks
+    for update to authenticated using (
+        exists(select 1 from public.wc_subtask_operators so where so.subtask_id = id and so.operator_id = auth.uid())
+    ) with check (
+        exists(select 1 from public.wc_subtask_operators so where so.subtask_id = id and so.operator_id = auth.uid())
+    );
+
+create policy wc_subtask_operators_owner_write on public.wc_subtask_operators
+    for all to authenticated using (
+        exists(select 1 from public.wc_subtasks s join public.wc_tasks t on t.id = s.task_id
+               where s.id = subtask_id and (t.owner_id = auth.uid() or public.is_admin()))
+    ) with check (
+        exists(select 1 from public.wc_subtasks s join public.wc_tasks t on t.id = s.task_id
+               where s.id = subtask_id and (t.owner_id = auth.uid() or public.is_admin()))
+    );
+create policy wc_subtask_operators_team_read on public.wc_subtask_operators
+    for select to authenticated using (
+        exists(select 1 from public.wc_subtasks s where s.id = subtask_id and public.wc_can_see_task(s.task_id))
+    );
+
+-- aggiornamenti: tutto il team del task legge e scrive (sempre a nome
+-- proprio — mai a nome di qualcun altro); solo l'autore (o l'admin) elimina.
+create policy wc_task_updates_team_read on public.wc_task_updates
+    for select to authenticated using (public.wc_can_see_task(task_id));
+create policy wc_task_updates_team_insert on public.wc_task_updates
+    for insert to authenticated with check (author_id = auth.uid() and public.wc_can_see_task(task_id));
+create policy wc_task_updates_author_delete on public.wc_task_updates
+    for delete to authenticated using (author_id = auth.uid() or public.is_admin());
+
+grant select, insert, update, delete on
+    public.wc_categories, public.wc_backlog, public.wc_tasks, public.wc_task_operators,
+    public.wc_subtasks, public.wc_subtask_operators, public.wc_task_updates
+    to authenticated;
+
+-- ============================================================================
+--  FINE STRATO FATTURAZIONE + WORK CALENDAR.
 --
 --  Verificato:
 --   - prossimo_numero(): atomicità sotto concorrenza (test SQL Editor a due
