@@ -1,5 +1,5 @@
 -- ============================================================================
---  TEST DI ISOLAMENTO GDPR — ripetibile, tre scenari indipendenti
+--  TEST DI ISOLAMENTO GDPR — ripetibile, quattro scenari indipendenti
 --
 --  SCENARIO A: un utente con puo_fatturare=true (ma senza ruolo/associazione
 --  GESPP che gliene darebbe accesso comunque) NON deve poter leggere le
@@ -23,6 +23,15 @@
 --  sanitari di una persona di X — serve anche il consenso attivo, non basta
 --  l'appartenenza all'azienda.
 --
+--  SCENARIO D: isolamento del Calendar Work (tabelle wc_*, GESPP). A
+--  differenza degli altri domini, un'attività di calendario NON referenzia
+--  persons/companies — è un'attività personale del consulente, isolata per
+--  proprietario e per taggatura, non per soggetto. Il punto critico qui non
+--  è "vedo i dati sanitari di qualcuno" ma la GRANULARITÀ: un consulente
+--  taggato su UN task di un collega non deve vedere automaticamente TUTTI
+--  gli altri task di quello stesso collega — solo quello a cui è stato
+--  esplicitamente taggato.
+--
 --  PREREQUISITO (una tantum per ambiente, non automatizzabile in SQL):
 --    app_users.id referenzia auth.users(id) — un uuid inventato viola quel
 --    vincolo di chiave esterna (visto empiricamente: ERROR 23503 su
@@ -33,17 +42,19 @@
 --    utente per tutti e tre gli scenari, riconfigurato di volta in volta —
 --    non serve un secondo/terzo account Auth).
 --
---  ESECUZIONE — TRE SCRIPT INDIPENDENTI, UNO ALLA VOLTA: sono tre blocchi
---  separati (ciascuno begin...rollback) nello stesso file. Svuota l'SQL
---  Editor (Ctrl+A, Canc), incolla e lancia SOLO uno script, leggi l'esito,
---  svuota di nuovo l'editor, passa al successivo. Non incollarne due insieme:
---  con più SELECT in un'unica esecuzione l'editor mostra in genere solo il
---  risultato dell'ultima, e questo ne renderebbe invisibile uno dei due.
+--  ESECUZIONE — QUATTRO SCRIPT INDIPENDENTI, UNO ALLA VOLTA: sono quattro
+--  blocchi separati (ciascuno begin...rollback) nello stesso file. Svuota
+--  l'SQL Editor (Ctrl+A, Canc), incolla e lancia SOLO uno script, leggi
+--  l'esito, svuota di nuovo l'editor, passa al successivo. Non incollarne
+--  due insieme: con più SELECT in un'unica esecuzione l'editor mostra in
+--  genere solo il risultato dell'ultima, e questo ne renderebbe invisibile
+--  uno dei due.
 --
 --  Ogni script è autocontenuto: la riga in app_users, i suoi eventuali
 --  legami, e persino i dati di prova per i controlli positivi (un emittente
 --  per lo scenario A, un calendario "pool" per lo scenario B, due aziende +
---  una persona + un consenso revocato per lo scenario C) vivono dentro
+--  una persona + un consenso revocato per lo scenario C, due task di
+--  calendario di un altro consulente per lo scenario D) vivono dentro
 --  un'UNICA transazione che viene SEMPRE annullata (rollback) alla fine,
 --  indipendentemente dall'esito — zero residui nel database, si può
 --  rilanciare quante volte serve. L'utente Auth stesso (in auth.users)
@@ -75,6 +86,9 @@
 --    - Scenario C: vede l'azienda X (legame) e la persona dentro X
 --      (can_access_person via il legame aziendale) — ma NON i dati sanitari
 --      di quella persona, nonostante fisicamente esistano nella transazione.
+--    - Scenario D: dopo essere taggato, vede il task su cui è taggato — ma
+--      NON un secondo task dello stesso proprietario su cui non è taggato
+--      (controllo di granularità: taggato sul task, non sul proprietario).
 -- ============================================================================
 
 
@@ -268,3 +282,103 @@ select verifica, valore from (values
 rollback; -- annulla TUTTO: utente di test, aziende X/Y, persona, consenso e
           -- dato sanitario di prova, legame consultant_company, ogni
           -- effetto collaterale. Zero residui, ripetibile quante volte serve.
+
+
+-- ============================================================================
+--  SCRIPT 4/4 — SCENARIO D (eseguire DOPO aver letto l'esito dello Script 3,
+--  in un editor svuotato — non incollare di seguito agli script precedenti)
+-- ============================================================================
+begin;
+
+select set_config('test.gdpr_user_id', 'INCOLLA-QUI-UUID-UTENTE-AUTH', true);
+
+-- Consulente normale, senza puo_fatturare e senza legami — il ruolo esatto
+-- non è rilevante per questo scenario (l'isolamento qui è per taggatura,
+-- non per fatturazione), riusa lo stesso profilo minimale degli altri.
+insert into public.app_users (id, nome, cognome, email, ruolo, puo_fatturare, attivo)
+values (current_setting('test.gdpr_user_id')::uuid, 'Test', 'GDPR Isolation D',
+        'test.gdpr.isolation.d@example.invalid', 'consulente', false, true)
+on conflict (id) do update
+    set ruolo = 'consulente', puo_fatturare = false, attivo = true;
+
+delete from public.operator_emitter   where operator_id   = current_setting('test.gdpr_user_id')::uuid;
+delete from public.consultant_company where consultant_id = current_setting('test.gdpr_user_id')::uuid;
+delete from public.consultant_person  where consultant_id = current_setting('test.gdpr_user_id')::uuid;
+delete from public.wc_task_operators  where operator_id   = current_setting('test.gdpr_user_id')::uuid;
+
+-- Autosufficienza: individua un ALTRO consulente reale già esistente nel
+-- sistema per usarlo come proprietario del task di prova — non lo
+-- impersoniamo, serve solo come valore valido per owner_id (FK su
+-- app_users), non tocchiamo nessun suo dato reale. Se il database ha un
+-- solo app_user in tutto (solo il nostro utente di test), questo passo
+-- restituisce null e l'insert successivo fallisce: serve almeno un
+-- secondo consulente già presente.
+select set_config('test.other_owner_id',
+    (select id::text from public.app_users where id <> current_setting('test.gdpr_user_id')::uuid limit 1),
+    true);
+
+-- Due task di prova dello stesso "altro" proprietario: uno taggherà il
+-- nostro utente di test, l'altro no — dimostra che la visibilità concessa
+-- da wc_can_see_task() è per SINGOLO task, non "tutti i task di quel
+-- proprietario una volta che ne vedi uno".
+with tk1 as (
+    insert into public.wc_tasks (owner_id, nome, data)
+    values (current_setting('test.other_owner_id')::uuid, 'TEST isolamento calendario — sarà taggato (auto-rimosso)', current_date)
+    returning id
+)
+select set_config('test.task_tagged_id', id::text, true) from tk1;
+
+with tk2 as (
+    insert into public.wc_tasks (owner_id, nome, data)
+    values (current_setting('test.other_owner_id')::uuid, 'TEST isolamento calendario — resterà non taggato (auto-rimosso)', current_date)
+    returning id
+)
+select set_config('test.task_untagged_id', id::text, true) from tk2;
+
+-- Prima lettura: il nostro utente NON è ancora taggato da nessuna parte —
+-- salviamo il risultato ora (non ancora taggato) per mostrarlo insieme a
+-- quello finale in un'unica riga di report più sotto.
+set local role authenticated;
+select set_config(
+    'request.jwt.claims',
+    json_build_object('sub', current_setting('test.gdpr_user_id'), 'role', 'authenticated')::text,
+    true
+);
+select set_config('test.pre_tag_tagged',   (select count(*) from public.wc_tasks where id = current_setting('test.task_tagged_id')::uuid)::text,   true);
+select set_config('test.pre_tag_untagged', (select count(*) from public.wc_tasks where id = current_setting('test.task_untagged_id')::uuid)::text, true);
+
+-- Ora tagghiamo il nostro utente SOLO sul primo task (come postgres: la
+-- RLS di scrittura su wc_task_operators richiede di essere il proprietario
+-- del task, non il nostro utente di test).
+reset role;
+insert into public.wc_task_operators (task_id, operator_id)
+values (current_setting('test.task_tagged_id')::uuid, current_setting('test.gdpr_user_id')::uuid);
+
+set local role authenticated;
+select set_config(
+    'request.jwt.claims',
+    json_build_object('sub', current_setting('test.gdpr_user_id'), 'role', 'authenticated')::text,
+    true
+);
+
+select verifica, valore from (values
+    ('D. ruolo utente (atteso: consulente)', (select ruolo from public.app_users where id = current_setting('test.gdpr_user_id')::uuid)::text),
+    ('D. can_bill() (atteso: false)', public.can_bill()::text),
+    ('D. PRIMA di essere taggato: vedeva il task che sarebbe stato taggato (atteso: 0)', current_setting('test.pre_tag_tagged')),
+    ('D. PRIMA di essere taggato: vedeva il task che resta non taggato (atteso: 0)', current_setting('test.pre_tag_untagged')),
+    ('D. DOPO essere taggato: VEDE il task taggato (ATTESO: 1 - controllo positivo)', (select count(*) from public.wc_tasks where id = current_setting('test.task_tagged_id')::uuid)::text),
+    ('D. DOPO essere taggato: NON vede il secondo task dello stesso proprietario (atteso: 0 - granularita per task, non per proprietario)', (select count(*) from public.wc_tasks where id = current_setting('test.task_untagged_id')::uuid)::text),
+    ('D. n_spp_profiles (atteso: 0)', (select count(*) from public.spp_profiles)::text),
+    ('D. n_health_consents (atteso: 0)', (select count(*) from public.health_consents)::text),
+    ('D. n_health_records (atteso: 0)', (select count(*) from public.health_records)::text),
+    ('D. n_self_reports (atteso: 0)', (select count(*) from public.self_reports)::text),
+    ('D. n_meetings (atteso: 0)', (select count(*) from public.meetings)::text),
+    ('D. n_emitter_settings (atteso: 0)', (select count(*) from public.emitter_settings)::text),
+    ('D. n_invoices (atteso: 0)', (select count(*) from public.invoices)::text),
+    ('D. n_invoice_lines (atteso: 0)', (select count(*) from public.invoice_lines)::text)
+) as t(verifica, valore);
+
+rollback; -- annulla TUTTO: utente di test, entrambi i task di prova, la
+          -- taggatura, ogni effetto collaterale (incluso sul consulente
+          -- "altro" usato solo come proprietario). Zero residui, ripetibile
+          -- quante volte serve.
