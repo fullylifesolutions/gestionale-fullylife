@@ -1,5 +1,5 @@
 -- ============================================================================
---  TEST DI ISOLAMENTO GDPR — ripetibile, quattro scenari indipendenti
+--  TEST DI ISOLAMENTO GDPR — ripetibile, cinque scenari indipendenti
 --
 --  SCENARIO A: un utente con puo_fatturare=true (ma senza ruolo/associazione
 --  GESPP che gliene darebbe accesso comunque) NON deve poter leggere le
@@ -32,6 +32,20 @@
 --  gli altri task di quello stesso collega — solo quello a cui è stato
 --  esplicitamente taggato.
 --
+--  SCENARIO E: restrizione della vista aggregata v_spp_patologia_agg
+--  (statistiche patologia × assi SPP), corretta il 2026-09-08 dopo un audit
+--  che l'ha trovata leggibile da QUALUNQUE utente 'authenticated' senza
+--  rispettare la RLS (security_invoker mancante, owner=postgres bypassa la
+--  RLS come qualunque superuser). La regola voluta è più stretta della RLS
+--  di health_records da sola: SOLO il ruolo amministratore vede l'aggregato,
+--  con conteggi pieni e nessuna soppressione (chi accede ha comunque diritto
+--  ai dati individuali sottostanti). Il punto critico non è "esistono dati
+--  da vedere" ma la GRANULARITÀ del gate: un consulente_limitato E un
+--  consulente normale (non limitato) CON un legame legittimo verso la
+--  persona di prova (quindi già in grado di leggere il singolo
+--  health_records via RLS ordinaria) devono comunque ottenere ZERO righe
+--  dalla vista — solo passando a ruolo admin l'aggregato compare.
+--
 --  PREREQUISITO (una tantum per ambiente, non automatizzabile in SQL):
 --    app_users.id referenzia auth.users(id) — un uuid inventato viola quel
 --    vincolo di chiave esterna (visto empiricamente: ERROR 23503 su
@@ -42,7 +56,7 @@
 --    utente per tutti e tre gli scenari, riconfigurato di volta in volta —
 --    non serve un secondo/terzo account Auth).
 --
---  ESECUZIONE — QUATTRO SCRIPT INDIPENDENTI, UNO ALLA VOLTA: sono quattro
+--  ESECUZIONE — CINQUE SCRIPT INDIPENDENTI, UNO ALLA VOLTA: sono cinque
 --  blocchi separati (ciascuno begin...rollback) nello stesso file. Svuota
 --  l'SQL Editor (Ctrl+A, Canc), incolla e lancia SOLO uno script, leggi
 --  l'esito, svuota di nuovo l'editor, passa al successivo. Non incollarne
@@ -54,7 +68,8 @@
 --  legami, e persino i dati di prova per i controlli positivi (un emittente
 --  per lo scenario A, un calendario "pool" per lo scenario B, due aziende +
 --  una persona + un consenso revocato per lo scenario C, due task di
---  calendario di un altro consulente per lo scenario D) vivono dentro
+--  calendario di un altro consulente per lo scenario D, una persona con
+--  consenso attivo + patologia + profilo SPP per lo scenario E) vivono dentro
 --  un'UNICA transazione che viene SEMPRE annullata (rollback) alla fine,
 --  indipendentemente dall'esito — zero residui nel database, si può
 --  rilanciare quante volte serve. L'utente Auth stesso (in auth.users)
@@ -89,6 +104,10 @@
 --    - Scenario D: dopo essere taggato, vede il task su cui è taggato — ma
 --      NON un secondo task dello stesso proprietario su cui non è taggato
 --      (controllo di granularità: taggato sul task, non sul proprietario).
+--    - Scenario E: da ruolo admin, vede la riga aggregata della patologia di
+--      prova in v_spp_patologia_agg (numero_casi >= 1) — sia da
+--      consulente_limitato sia da consulente normale con legame legittimo
+--      (che vede già il singolo health_records) la vista deve dare 0 righe.
 -- ============================================================================
 
 
@@ -382,3 +401,129 @@ rollback; -- annulla TUTTO: utente di test, entrambi i task di prova, la
           -- taggatura, ogni effetto collaterale (incluso sul consulente
           -- "altro" usato solo come proprietario). Zero residui, ripetibile
           -- quante volte serve.
+
+
+-- ============================================================================
+--  SCRIPT 5/5 — SCENARIO E (eseguire DOPO aver letto l'esito dello Script 4,
+--  in un editor svuotato — non incollare di seguito agli script precedenti)
+-- ============================================================================
+begin;
+
+select set_config('test.gdpr_user_id', 'INCOLLA-QUI-UUID-UTENTE-AUTH', true);
+
+-- Partiamo da consulente_limitato: e il caso piu ovvio, gia escluso da
+-- health_access via current_role() <> 'consulente_limitato'. Il ruolo viene
+-- alzato progressivamente nello stesso script (limitato -> consulente pieno
+-- con legame legittimo -> admin) per dimostrare che il gate della vista non
+-- e la RLS di health_records (che un consulente pieno con legame supera
+-- gia) ma la regola aggiuntiva is_admin() dentro la vista stessa.
+insert into public.app_users (id, nome, cognome, email, ruolo, puo_fatturare, attivo)
+values (current_setting('test.gdpr_user_id')::uuid, 'Test', 'GDPR Isolation E',
+        'test.gdpr.isolation.e@example.invalid', 'consulente_limitato', false, true)
+on conflict (id) do update
+    set ruolo = 'consulente_limitato', puo_fatturare = false, attivo = true;
+
+delete from public.operator_emitter   where operator_id   = current_setting('test.gdpr_user_id')::uuid;
+delete from public.consultant_company where consultant_id = current_setting('test.gdpr_user_id')::uuid;
+delete from public.consultant_person  where consultant_id = current_setting('test.gdpr_user_id')::uuid;
+
+-- Autosufficienza: azienda + persona + consenso ATTIVO + patologia + record
+-- sanitario + profilo SPP di prova, così la vista ha davvero una riga da
+-- aggregare (altrimenti uno zero non proverebbe nulla: potrebbe essere
+-- "non c'è niente da vedere" invece di "il gate blocca l'accesso"). Il
+-- nostro utente di test viene legato alla persona via consultant_person: da
+-- consulente pieno (non limitato) avrebbe quindi accesso legittimo al
+-- singolo health_records tramite la RLS ordinaria — il punto dello scenario
+-- è che questo NON gli basta per vedere l'aggregato.
+with x as (
+    insert into public.companies (ragione_sociale) values ('TEST isolamento GDPR — azienda E (statistiche)') returning id
+)
+select set_config('test.company_e_id', id::text, true) from x;
+
+with p as (
+    insert into public.persons (tipo, nome, cognome, company_id)
+    values ('dipendente', 'Test', 'Persona E', current_setting('test.company_e_id')::uuid)
+    returning id
+)
+select set_config('test.person_e_id', id::text, true) from p;
+
+insert into public.consultant_person (consultant_id, person_id)
+values (current_setting('test.gdpr_user_id')::uuid, current_setting('test.person_e_id')::uuid);
+
+with c as (
+    insert into public.health_consents (person_id, testo_versione, stato)
+    values (current_setting('test.person_e_id')::uuid, 'v1.0-test', 'attivo')
+    returning id
+)
+select set_config('test.consent_e_id', id::text, true) from c;
+
+with pat as (
+    insert into public.pathologies (denominazione)
+    values ('TEST isolamento GDPR — patologia scenario E (auto-rimossa)')
+    returning id
+)
+select set_config('test.pathology_e_id', id::text, true) from pat;
+
+insert into public.health_records (person_id, consent_id, pathology_id, data_rilevazione)
+values (current_setting('test.person_e_id')::uuid, current_setting('test.consent_e_id')::uuid,
+        current_setting('test.pathology_e_id')::uuid, current_date);
+
+insert into public.spp_profiles (person_id, consultant_id, asse1_sessualita)
+values (current_setting('test.person_e_id')::uuid, current_setting('test.gdpr_user_id')::uuid, 'TEST-asse1');
+
+-- Lettura 1: come consulente_limitato.
+set local role authenticated;
+select set_config(
+    'request.jwt.claims',
+    json_build_object('sub', current_setting('test.gdpr_user_id'), 'role', 'authenticated')::text,
+    true
+);
+select set_config('test.e_limitato_stats',
+    (select count(*) from public.v_spp_patologia_agg
+     where denominazione = 'TEST isolamento GDPR — patologia scenario E (auto-rimossa)')::text, true);
+select set_config('test.e_limitato_health_records',
+    (select count(*) from public.health_records where person_id = current_setting('test.person_e_id')::uuid)::text, true);
+
+-- Alza il ruolo a consulente pieno (non limitato) — il legame
+-- consultant_person resta quello di prima.
+reset role;
+update public.app_users set ruolo = 'consulente' where id = current_setting('test.gdpr_user_id')::uuid;
+
+-- Lettura 2: come consulente pieno con legame legittimo.
+set local role authenticated;
+select set_config(
+    'request.jwt.claims',
+    json_build_object('sub', current_setting('test.gdpr_user_id'), 'role', 'authenticated')::text,
+    true
+);
+select set_config('test.e_consulente_stats',
+    (select count(*) from public.v_spp_patologia_agg
+     where denominazione = 'TEST isolamento GDPR — patologia scenario E (auto-rimossa)')::text, true);
+select set_config('test.e_consulente_health_records',
+    (select count(*) from public.health_records where person_id = current_setting('test.person_e_id')::uuid)::text, true);
+
+-- Alza il ruolo ad admin — controllo positivo obbligatorio.
+reset role;
+update public.app_users set ruolo = 'admin' where id = current_setting('test.gdpr_user_id')::uuid;
+
+set local role authenticated;
+select set_config(
+    'request.jwt.claims',
+    json_build_object('sub', current_setting('test.gdpr_user_id'), 'role', 'authenticated')::text,
+    true
+);
+
+select verifica, valore from (values
+    ('E. n_v_spp_patologia_agg da consulente_limitato (atteso: 0 - gate is_admin())', current_setting('test.e_limitato_stats')),
+    ('E. n_health_records da consulente_limitato (atteso: 0 - health_access esclude questo ruolo)', current_setting('test.e_limitato_health_records')),
+    ('E. n_v_spp_patologia_agg da consulente pieno con legame legittimo (ATTESO: 0 - la vista e piu restrittiva della RLS di health_records)', current_setting('test.e_consulente_stats')),
+    ('E. n_health_records da consulente pieno con legame legittimo (atteso: 1 - vede gia il dato individuale via RLS ordinaria, a riprova che la restrizione sulla vista e una regola aggiuntiva, non un effetto collaterale di dati mancanti)', current_setting('test.e_consulente_health_records')),
+    ('E. n_v_spp_patologia_agg da admin (ATTESO: maggiore o uguale a 1 - controllo positivo, la patologia di prova e visibile)',
+        (select count(*) from public.v_spp_patologia_agg
+         where denominazione = 'TEST isolamento GDPR — patologia scenario E (auto-rimossa)')::text)
+) as t(verifica, valore);
+
+rollback; -- annulla TUTTO: utente di test, azienda/persona/consenso/
+          -- patologia/record sanitario/profilo SPP di prova, legame
+          -- consultant_person, ogni cambio di ruolo. Zero residui,
+          -- ripetibile quante volte serve.
