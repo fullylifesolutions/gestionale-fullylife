@@ -609,9 +609,9 @@ textarea{resize:vertical;min-height:58px}
     </div>
   </div>
 
-  <!-- LOGO PDF -->
-  <div class="card">
-    <div class="card-head"><div class="hl"><div class="ci">🖼️</div><div><h3>Logo professionale</h3><p>Appare nell'intestazione di tutti i PDF (preventivi, fatture, note spese)</p></div></div></div>
+  <!-- LOGO ORGANIZZATIVO (solo admin: unico per tutti, compare sui documenti di ogni operatore) -->
+  <div class="card" id="logo-card" style="display:none">
+    <div class="card-head"><div class="hl"><div class="ci">🖼️</div><div><h3>Logo organizzativo</h3><p>Unico per tutti gli operatori — appare nell'intestazione di tutti i PDF (preventivi, fatture, note spese)</p></div></div></div>
     <div class="card-body">
       <div class="logo-drop" id="logo-drop">
         <input type="file" accept="image/*" onchange="handleLogo(event)">
@@ -1075,11 +1075,13 @@ async function doLogout(){
   await supabaseClient.auth.signOut();
   curId=null;curEmitter=null;profiles=[];isAdmin=false;
   document.getElementById('nav-utenti').style.display='none';
+  document.getElementById('logo-card').style.display='none';
   showScreen('login-screen');
 }
 async function afterLogin(){
   isAdmin=await checkIsAdmin();
   document.getElementById('nav-utenti').style.display=isAdmin?'':'none';
+  document.getElementById('logo-card').style.display=isAdmin?'':'none';
   showScreen('profile-screen');
   await renderPS();
 }
@@ -1099,6 +1101,7 @@ supabaseClient.auth.onAuthStateChange((event)=>{
   if(event==='SIGNED_OUT'){
     curId=null;curEmitter=null;profiles=[];isAdmin=false;
     document.getElementById('nav-utenti').style.display='none';
+    document.getElementById('logo-card').style.display='none';
     showScreen('login-screen');
   }
   if(event==='PASSWORD_RECOVERY'){
@@ -1293,27 +1296,35 @@ function removeFoto(){
   updateSB();
 }
 
-// ══ LOGO PDF (settings) ══
-function handleLogo(e){
-  alert('Logo PDF: disponibile a breve in questo modulo.');return;
+// ══ LOGO ORGANIZZATIVO (bucket Storage pubblico "loghi", path fisso — unico
+//    per tutti, non per-emittente/per-operatore: sola scrittura admin via RLS
+//    su storage.objects, lettura pubblica perché i documenti si stampano in
+//    una window.open() senza sessione. Se in futuro si migrano firma/foto
+//    (per-operatore, non pubbliche) allo stesso pattern, usare un bucket
+//    PRIVATO con path per-utente invece di uno pubblico a path fisso. ══
+const LOGO_PATH='logo.png';
+function getCurLogo(){
+  const{data}=supabaseClient.storage.from('loghi').getPublicUrl(LOGO_PATH);
+  return data.publicUrl+'?t='+Date.now();  // cache-bust: stesso path per ogni upload/rimozione
+}
+function refreshLogoPreview(){
+  const lp=document.getElementById('logo-prev'),lr=document.getElementById('logo-rm'),lt=document.getElementById('logo-txt');
+  lp.onload=()=>{lp.style.display='block';lt.textContent='';lr.style.display='inline-flex';};
+  lp.onerror=()=>{lp.style.display='none';lr.style.display='none';lt.innerHTML='<strong>Clicca per caricare</strong> il logo (PNG, JPG, SVG)';};
+  lp.src=getCurLogo();
+}
+async function handleLogo(e){
   const f=e.target.files[0];if(!f)return;
-  const r=new FileReader();r.onload=ev=>{
-    const res=ev.target.result,b64=res.split(',')[1],mime=f.type;
-    const p=profiles.find(x=>x.id===curId);if(p){p.logoB64=b64;p.logoMime=mime;localStorage.setItem('mp_profiles',JSON.stringify(profiles));}
-    const pr=document.getElementById('logo-prev');pr.src=res;pr.style.display='block';
-    document.getElementById('logo-txt').textContent='';document.getElementById('logo-rm').style.display='inline-flex';
-    updateSB();
-  };r.readAsDataURL(f);
+  const{error}=await supabaseClient.storage.from('loghi').upload(LOGO_PATH,f,{upsert:true,contentType:f.type});
+  if(error){alert('Errore nel caricamento del logo: '+error.message);return;}
+  refreshLogoPreview();
 }
-function removeLogo(e){
-  alert('Logo PDF: disponibile a breve in questo modulo.');return;
-  e.stopPropagation();const p=profiles.find(x=>x.id===curId);
-  if(p){p.logoB64=null;p.logoMime=null;localStorage.setItem('mp_profiles',JSON.stringify(profiles));}
-  document.getElementById('logo-prev').style.display='none';
-  document.getElementById('logo-txt').innerHTML='<strong>Clicca per caricare</strong> il logo (PNG, JPG, SVG)';
-  document.getElementById('logo-rm').style.display='none';updateSB();
+async function removeLogo(e){
+  e.stopPropagation();
+  const{error}=await supabaseClient.storage.from('loghi').remove([LOGO_PATH]);
+  if(error){alert('Errore nella rimozione del logo: '+error.message);return;}
+  refreshLogoPreview();
 }
-function getCurLogo(){const p=profiles.find(x=>x.id===curId)||{};return{b64:p.logoB64,mime:p.logoMime};}
 
 function handleFirma(e){
   alert('Firma digitale: disponibile a breve in questo modulo.');return;
@@ -2069,10 +2080,8 @@ function loadSF(){
     document.getElementById('foto-txt').innerHTML='<strong>Clicca per caricare</strong> la tua foto (PNG, JPG)';
     frmBtn.style.display='none';
   }
-  // Logo PDF
-  const lp=document.getElementById('logo-prev'),lr=document.getElementById('logo-rm');
-  if(p&&p.logoB64){lp.src=`data:${p.logoMime};base64,${p.logoB64}`;lp.style.display='block';document.getElementById('logo-txt').textContent='';lr.style.display='inline-flex';}
-  else{lp.style.display='none';lr.style.display='none';document.getElementById('logo-txt').innerHTML='<strong>Clicca per caricare</strong> il logo (PNG, JPG, SVG)';}
+  // Logo organizzativo (bucket pubblico "loghi", indipendente da curEmitter)
+  refreshLogoPreview();
   // Firma
   const fp=document.getElementById('firma-prev'),fr=document.getElementById('firma-rm');
   if(p&&p.firmaB64){fp.src='data:image/png;base64,'+p.firmaB64;fp.style.display='block';document.getElementById('firma-txt').textContent='';fr.style.display='inline-flex';}
@@ -2139,7 +2148,7 @@ function utl(){
 }
 
 // ══ PDF ══
-function logoHTML(){const l=getCurLogo();return l.b64?`<img src="data:${l.mime};base64,${l.b64}" style="max-height:54px;max-width:175px;object-fit:contain;display:block;margin-bottom:6mm">`:''}
+function logoHTML(){return `<img src="${getCurLogo()}" onerror="this.style.display='none'" style="max-height:54px;max-width:175px;object-fit:contain;display:block;margin-bottom:6mm">`;}
 function openPrint(html){
   const w=window.open('','_blank','width=1100,height=800');
   if(!w||w.closed){alert('Abilita i popup per questo sito.');return;}

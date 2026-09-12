@@ -537,6 +537,38 @@ $$;
 grant execute on function public.emittenti_disponibili() to authenticated;
 
 -- ============================================================================
+-- 10. LOGO ORGANIZZATIVO — bucket Storage "loghi"
+--    Logo UNICO, condiviso da tutti gli operatori (a differenza di
+--    emitter_settings, che è per-emittente): path fisso 'logo.png', upsert lo
+--    sostituisce. Nessuna colonna in emitter_settings — l'URL pubblico è
+--    costruibile a runtime da getPublicUrl(), non va persistito.
+--    Stesso pattern del bucket "consensi" in GESPP (gespp_1_schema.sql /
+--    gespp_2_funzioni_policy.sql): pubblico in lettura, perché i documenti si
+--    generano in una window.open() senza sessione Supabase e serve un URL
+--    diretto; scrittura (insert/update/delete) riservata all'admin.
+-- ----------------------------------------------------------------------------
+insert into storage.buckets (id, name, public)
+values ('loghi', 'loghi', true)
+on conflict (id) do nothing;
+
+drop policy if exists loghi_public_read on storage.objects;
+create policy loghi_public_read on storage.objects
+    for select to anon, authenticated using (bucket_id = 'loghi');
+
+drop policy if exists loghi_admin_insert on storage.objects;
+create policy loghi_admin_insert on storage.objects
+    for insert to authenticated with check (bucket_id = 'loghi' and public.is_admin());
+
+drop policy if exists loghi_admin_update on storage.objects;
+create policy loghi_admin_update on storage.objects
+    for update to authenticated using (bucket_id = 'loghi' and public.is_admin())
+    with check (bucket_id = 'loghi' and public.is_admin());
+
+drop policy if exists loghi_admin_delete on storage.objects;
+create policy loghi_admin_delete on storage.objects
+    for delete to authenticated using (bucket_id = 'loghi' and public.is_admin());
+
+-- ============================================================================
 --  FINE STRATO FATTURAZIONE.
 --
 --  Verificato:
