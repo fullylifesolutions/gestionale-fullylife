@@ -527,17 +527,29 @@ textarea{resize:vertical;min-height:58px}
       </div>
     </div>
   </div>
-  <!-- REFERENTI (solo aziende; la gestione vera richiede un company_id già esistente) -->
-  <div class="card" id="cl-contacts-card">
-    <div class="card-head"><div class="hl"><div class="ci">👥</div><div><h3>Referenti</h3><p>Persone di contatto in azienda — commerciale, referente per le persone, ecc. Condivisi con GESPP.</p></div></div>
-      <button class="btn btn-sm btn-primary" id="cl-contacts-add-btn" onclick="openContactModal()" style="display:none">+ Referente</button>
+  <input type="text" id="cli-search" placeholder="🔍  Cerca per nome, P.IVA, email…" oninput="renderCliList()" style="width:100%;font-size:.85rem;margin-bottom:10px">
+  <div id="cli-list" class="client-list"></div>
+</div>
+
+<!-- Modal: dettaglio cliente (sola lettura) -->
+<div class="overlay" id="ov-cli-detail">
+  <div class="modal" style="width:min(640px,94vw);max-height:85vh">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <h3 id="clid-title">Dettaglio cliente</h3>
+      <button class="btn btn-sm" onclick="closeOv('cli-detail')">✕</button>
     </div>
-    <div class="card-body">
-      <p class="empty" id="cl-contacts-hint" style="padding:8px 0">Salva prima l'azienda, poi riaprila in modifica per aggiungere i referenti.</p>
+    <div id="clid-fiscal"></div>
+    <div id="clid-contacts-section" style="display:none">
+      <div class="sep"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 8px">
+        <p style="font-size:.7rem;font-weight:600;color:var(--ink-2);text-transform:uppercase;letter-spacing:.06em">Referenti</p>
+        <button class="btn btn-sm btn-primary" onclick="openContactModal()">+ Referente</button>
+      </div>
       <div id="cl-contacts-list" style="display:flex;flex-direction:column;gap:6px"></div>
     </div>
+    <div class="sep"></div>
+    <button class="btn btn-primary" id="clid-edit-btn">✏️ Modifica</button>
   </div>
-  <div id="cli-list" class="client-list"></div>
 </div>
 
 <!-- Modal: referente azienda -->
@@ -1852,10 +1864,6 @@ function updateClientFormType(){
   document.getElementById('cl-piva-label').textContent=isAzienda?'P.IVA':'P.IVA (opzionale)';
   document.getElementById('cl-vies-btn').style.display=isAzienda?'':'none';
   document.getElementById('cl-rl-field').style.display=isAzienda?'':'none';
-  // Referenti: la card si vede per qualunque azienda (anche in creazione, con
-  // un hint), il contenuto vero (lista/pulsante) lo decide loadContacts()
-  // in base a editClientId/editClientType.
-  document.getElementById('cl-contacts-card').style.display=isAzienda?'':'none';
 }
 
 function fromCompany(row){
@@ -1969,7 +1977,6 @@ async function addClient(){
   ['cl-nome','cl-cognome','cl-cf','cl-piva','cl-email','cl-ind','cl-cap','cl-comune','cl-prov','cl-rl','cl-sdi','cl-pec'].forEach(fid=>document.getElementById(fid).value='');
   document.querySelector('input[name="cl-tipo"][value="azienda"]').checked=true;
   updateClientFormType();
-  await loadContacts();
 }
 
 function cancelEditClient(){
@@ -1980,10 +1987,10 @@ function cancelEditClient(){
   document.getElementById('cl-submit-btn').textContent='Salva cliente';
   document.getElementById('cl-cancel-btn').style.display='none';
   document.getElementById('cl-form-title').textContent='Aggiungi cliente';
-  loadContacts();
 }
 
-function editClient(id,tipo){
+function editClient(id,tipo,e){
+  e&&e.stopPropagation();
   const c=clients.find(x=>x.id===id&&x.tipo===tipo);if(!c)return;
   editClientId=id;editClientType=tipo;
   document.querySelector(`input[name="cl-tipo"][value="${tipo}"]`).checked=true;
@@ -2005,25 +2012,50 @@ function editClient(id,tipo){
   document.getElementById('cl-form-title').textContent='Modifica cliente';
   document.getElementById('cl-nome').focus();
   document.getElementById('cl-nome').scrollIntoView({behavior:'smooth',block:'center'});
-  loadContacts();
 }
 
 function renderCliList(){
-  document.getElementById('cli-list').innerHTML=clients.length?clients.map(c=>`
-    <div class="cli-item">
+  const search=(document.getElementById('cli-search')?.value||'').toLowerCase();
+  let list=clients;
+  if(search)list=list.filter(c=>(c.nome+' '+(c.piva||'')+' '+(c.email||'')).toLowerCase().includes(search));
+  document.getElementById('cli-list').innerHTML=list.length?list.map(c=>`
+    <div class="cli-item" onclick="openClientDetail('${c.id}','${c.tipo}')">
       <span class="cli-name">${c.nome}${c.tipo==='persona'?' <span style="font-size:.68rem;color:var(--ink-3)">(persona)</span>':''}</span>
       <span class="cli-info">${[c.piva,c.email,c.codDest?'SDI: '+c.codDest:null,c.pecSdi?'PEC: '+c.pecSdi:null].filter(Boolean).join(' · ')}</span>
-      <button class="btn btn-sm" onclick="openStorico('${c.id}','${c.tipo}')">Storico</button>
-      <button class="btn btn-sm" onclick="editClient('${c.id}','${c.tipo}')">✏️ Modifica</button>
-      <button class="btn btn-sm cli-use" onclick="useClient('${c.id}','${c.tipo}')">Usa</button>
-      <button class="cli-del" onclick="delCli('${c.id}','${c.tipo}')">✕</button>
-    </div>`).join(''):'<p class="empty"><div class="ei">👤</div>Nessun cliente.</p>';
+      <button class="btn btn-sm" onclick="openStorico('${c.id}','${c.tipo}',event)">Storico</button>
+      <button class="btn btn-sm" onclick="editClient('${c.id}','${c.tipo}',event)">✏️ Modifica</button>
+      <button class="btn btn-sm cli-use" onclick="useClient('${c.id}','${c.tipo}',event)">Usa</button>
+      <button class="cli-del" onclick="delCli('${c.id}','${c.tipo}',event)">✕</button>
+    </div>`).join(''):`<p class="empty"><div class="ei">👤</div>${search?'Nessun cliente trovato.':'Nessun cliente.'}</p>`;
 }
-async function delCli(id,tipo){
+async function delCli(id,tipo,e){
+  e&&e.stopPropagation();
   const col=tipo==='azienda'?'company_id':'person_id';
   const{error}=await supabaseClient.from('billing_profiles').delete().eq(col,id);
   if(error){alert('Errore nell\'eliminazione: '+error.message);return;}
   await loadClients();
+}
+
+// ══ DETTAGLIO CLIENTE (sola lettura) — riusa la struttura dell'overlay Storico ══
+let detailClientId=null;
+function openClientDetail(id,tipo){
+  const c=clients.find(x=>x.id===id&&x.tipo===tipo);if(!c)return;
+  detailClientId=tipo==='azienda'?id:null;
+  const row=(label,val)=>val?`<div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);font-size:.85rem"><span style="font-weight:600;color:var(--ink-2);min-width:150px;flex-shrink:0">${label}</span><span>${val}</span></div>`:'';
+  document.getElementById('clid-title').textContent=c.nome;
+  document.getElementById('clid-fiscal').innerHTML=[
+    row(tipo==='azienda'?'P.IVA':'Codice Fiscale',tipo==='azienda'?c.piva:c.cf),
+    tipo==='persona'&&c.piva?row('P.IVA',c.piva):'',
+    row('Email',c.email),
+    row('Indirizzo',[c.ind,[c.cap,c.comune,c.prov].filter(Boolean).join(' ')].filter(Boolean).join(', ')),
+    tipo==='azienda'?row('Responsabile Legale',c.respLegale):'',
+    row('Codice SDI',c.codDest),
+    row('PEC',c.pecSdi)
+  ].join('')||'<p class="empty" style="padding:8px 0">Nessun dato fiscale inserito.</p>';
+  document.getElementById('clid-contacts-section').style.display=tipo==='azienda'?'':'none';
+  document.getElementById('clid-edit-btn').onclick=()=>{closeOv('cli-detail');editClient(id,tipo);};
+  loadContacts();  // si autopulisce se detailClientId è null (persona)
+  document.getElementById('ov-cli-detail').classList.add('open');
 }
 
 // ══ REFERENTI AZIENDA (company_contacts — tabella e logica condivise col GESPP,
@@ -2047,10 +2079,10 @@ function openContactModal(id){
   document.getElementById('ov-contact').classList.add('open');
 }
 async function saveContact(){
-  if(!editClientId||editClientType!=='azienda')return;
+  if(!detailClientId)return;
   const nome=document.getElementById('cc-nome').value.trim(),cognome=document.getElementById('cc-cognome').value.trim();
   if(!nome||!cognome){alert('Nome e cognome sono obbligatori.');return;}
-  const payload={company_id:editClientId,nome,cognome,
+  const payload={company_id:detailClientId,nome,cognome,
     ruolo:document.getElementById('cc-ruolo').value.trim()||null,
     email:document.getElementById('cc-email').value.trim()||null,
     telefono:document.getElementById('cc-tel').value.trim()||null};
@@ -2062,11 +2094,8 @@ async function saveContact(){
   await loadContacts();
 }
 async function loadContacts(){
-  const canManage=!!editClientId&&editClientType==='azienda';
-  document.getElementById('cl-contacts-hint').style.display=canManage?'none':'';
-  document.getElementById('cl-contacts-add-btn').style.display=canManage?'':'none';
-  if(!canManage){clientContacts=[];document.getElementById('cl-contacts-list').innerHTML='';return;}
-  const{data,error}=await supabaseClient.from('company_contacts').select('id,nome,cognome,ruolo,email,telefono').eq('company_id',editClientId).order('cognome');
+  if(!detailClientId){clientContacts=[];document.getElementById('cl-contacts-list').innerHTML='';return;}
+  const{data,error}=await supabaseClient.from('company_contacts').select('id,nome,cognome,ruolo,email,telefono').eq('company_id',detailClientId).order('cognome');
   if(error){document.getElementById('cl-contacts-list').innerHTML='<p class="empty">Errore: '+error.message+'</p>';return;}
   clientContacts=data||[];
   document.getElementById('cl-contacts-list').innerHTML=clientContacts.length?clientContacts.map(c=>`
@@ -2083,7 +2112,8 @@ async function delContact(id){
   if(error){alert('Errore nell\'eliminazione: '+error.message);return;}
   await loadContacts();
 }
-function useClient(id,tipo){
+function useClient(id,tipo,e){
+  e&&e.stopPropagation();
   const c=clients.find(x=>x.id===id&&x.tipo===tipo);if(!c)return;
   document.getElementById('d-cnome').value=c.nome;document.getElementById('d-cpiva').value=c.piva||'';
   document.getElementById('d-cemail').value=c.email||'';document.getElementById('d-cind').value=c.ind||'';
@@ -3099,7 +3129,8 @@ function creaNotaCredito(id,e){
 }
 
 // ══ STORICO CLIENTE ══
-function openStorico(cliId,tipo){
+function openStorico(cliId,tipo,e){
+  e&&e.stopPropagation();
   const c=clients.find(x=>x.id===cliId&&x.tipo===tipo);if(!c)return;
   // Match per id+tipo quando il documento è stato creato passando da "Usa cliente";
   // fallback per nome per i documenti compilati a mano senza passare dall'anagrafica.
