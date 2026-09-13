@@ -527,7 +527,38 @@ textarea{resize:vertical;min-height:58px}
       </div>
     </div>
   </div>
+  <!-- REFERENTI (solo aziende; la gestione vera richiede un company_id già esistente) -->
+  <div class="card" id="cl-contacts-card">
+    <div class="card-head"><div class="hl"><div class="ci">👥</div><div><h3>Referenti</h3><p>Persone di contatto in azienda — commerciale, referente per le persone, ecc. Condivisi con GESPP.</p></div></div>
+      <button class="btn btn-sm btn-primary" id="cl-contacts-add-btn" onclick="openContactModal()" style="display:none">+ Referente</button>
+    </div>
+    <div class="card-body">
+      <p class="empty" id="cl-contacts-hint" style="padding:8px 0">Salva prima l'azienda, poi riaprila in modifica per aggiungere i referenti.</p>
+      <div id="cl-contacts-list" style="display:flex;flex-direction:column;gap:6px"></div>
+    </div>
+  </div>
   <div id="cli-list" class="client-list"></div>
+</div>
+
+<!-- Modal: referente azienda -->
+<div class="overlay" id="ov-contact">
+  <div class="modal">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:13px">
+      <h3 id="cc-title">Nuovo referente</h3>
+      <button class="btn btn-sm" onclick="closeOv('contact')">✕</button>
+    </div>
+    <div class="grid2" style="margin-bottom:11px">
+      <div class="field"><label>Nome *</label><input type="text" id="cc-nome"></div>
+      <div class="field"><label>Cognome *</label><input type="text" id="cc-cognome"></div>
+      <div class="field span2"><label>Ruolo</label><input type="text" id="cc-ruolo" placeholder="Es. Referente commerciale, Referente HR"></div>
+      <div class="field"><label>Email</label><input type="email" id="cc-email"></div>
+      <div class="field"><label>Telefono</label><input type="tel" id="cc-tel"></div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-primary" onclick="saveContact()">Salva referente</button>
+      <button class="btn btn-sm" onclick="closeOv('contact')">Annulla</button>
+    </div>
+  </div>
 </div>
 
 <!-- VIAGGIO -->
@@ -1821,6 +1852,10 @@ function updateClientFormType(){
   document.getElementById('cl-piva-label').textContent=isAzienda?'P.IVA':'P.IVA (opzionale)';
   document.getElementById('cl-vies-btn').style.display=isAzienda?'':'none';
   document.getElementById('cl-rl-field').style.display=isAzienda?'':'none';
+  // Referenti: la card si vede per qualunque azienda (anche in creazione, con
+  // un hint), il contenuto vero (lista/pulsante) lo decide loadContacts()
+  // in base a editClientId/editClientType.
+  document.getElementById('cl-contacts-card').style.display=isAzienda?'':'none';
 }
 
 function fromCompany(row){
@@ -1934,6 +1969,7 @@ async function addClient(){
   ['cl-nome','cl-cognome','cl-cf','cl-piva','cl-email','cl-ind','cl-cap','cl-comune','cl-prov','cl-rl','cl-sdi','cl-pec'].forEach(fid=>document.getElementById(fid).value='');
   document.querySelector('input[name="cl-tipo"][value="azienda"]').checked=true;
   updateClientFormType();
+  await loadContacts();
 }
 
 function cancelEditClient(){
@@ -1944,6 +1980,7 @@ function cancelEditClient(){
   document.getElementById('cl-submit-btn').textContent='Salva cliente';
   document.getElementById('cl-cancel-btn').style.display='none';
   document.getElementById('cl-form-title').textContent='Aggiungi cliente';
+  loadContacts();
 }
 
 function editClient(id,tipo){
@@ -1968,6 +2005,7 @@ function editClient(id,tipo){
   document.getElementById('cl-form-title').textContent='Modifica cliente';
   document.getElementById('cl-nome').focus();
   document.getElementById('cl-nome').scrollIntoView({behavior:'smooth',block:'center'});
+  loadContacts();
 }
 
 function renderCliList(){
@@ -1986,6 +2024,64 @@ async function delCli(id,tipo){
   const{error}=await supabaseClient.from('billing_profiles').delete().eq(col,id);
   if(error){alert('Errore nell\'eliminazione: '+error.message);return;}
   await loadClients();
+}
+
+// ══ REFERENTI AZIENDA (company_contacts — tabella e logica condivise col GESPP,
+//    stesso pattern di openContactModal/saveContact/loadContacts/delContact di
+//    spp_dashboard.html) ══
+let clientContacts=[],editContactId=null;
+function openContactModal(id){
+  editContactId=id||null;
+  document.getElementById('cc-title').textContent=id?'Modifica referente':'Nuovo referente';
+  ['cc-nome','cc-cognome','cc-ruolo','cc-email','cc-tel'].forEach(f=>document.getElementById(f).value='');
+  if(id){
+    const c=clientContacts.find(x=>x.id===id);
+    if(c){
+      document.getElementById('cc-nome').value=c.nome||'';
+      document.getElementById('cc-cognome').value=c.cognome||'';
+      document.getElementById('cc-ruolo').value=c.ruolo||'';
+      document.getElementById('cc-email').value=c.email||'';
+      document.getElementById('cc-tel').value=c.telefono||'';
+    }
+  }
+  document.getElementById('ov-contact').classList.add('open');
+}
+async function saveContact(){
+  if(!editClientId||editClientType!=='azienda')return;
+  const nome=document.getElementById('cc-nome').value.trim(),cognome=document.getElementById('cc-cognome').value.trim();
+  if(!nome||!cognome){alert('Nome e cognome sono obbligatori.');return;}
+  const payload={company_id:editClientId,nome,cognome,
+    ruolo:document.getElementById('cc-ruolo').value.trim()||null,
+    email:document.getElementById('cc-email').value.trim()||null,
+    telefono:document.getElementById('cc-tel').value.trim()||null};
+  const{error}=editContactId
+    ?await supabaseClient.from('company_contacts').update(payload).eq('id',editContactId)
+    :await supabaseClient.from('company_contacts').insert(payload);
+  if(error){alert('Errore nel salvataggio del referente: '+error.message);return;}
+  closeOv('contact');
+  await loadContacts();
+}
+async function loadContacts(){
+  const canManage=!!editClientId&&editClientType==='azienda';
+  document.getElementById('cl-contacts-hint').style.display=canManage?'none':'';
+  document.getElementById('cl-contacts-add-btn').style.display=canManage?'':'none';
+  if(!canManage){clientContacts=[];document.getElementById('cl-contacts-list').innerHTML='';return;}
+  const{data,error}=await supabaseClient.from('company_contacts').select('id,nome,cognome,ruolo,email,telefono').eq('company_id',editClientId).order('cognome');
+  if(error){document.getElementById('cl-contacts-list').innerHTML='<p class="empty">Errore: '+error.message+'</p>';return;}
+  clientContacts=data||[];
+  document.getElementById('cl-contacts-list').innerHTML=clientContacts.length?clientContacts.map(c=>`
+    <div class="cli-item">
+      <span class="cli-name">${c.nome} ${c.cognome}${c.ruolo?' <span style="font-size:.72rem;color:var(--ink-3)">· '+c.ruolo+'</span>':''}</span>
+      <span class="cli-info">${[c.email,c.telefono].filter(Boolean).join(' · ')}</span>
+      <button class="btn btn-sm" onclick="openContactModal('${c.id}')">✏️ Modifica</button>
+      <button class="cli-del" onclick="delContact('${c.id}')">✕</button>
+    </div>`).join(''):'<p class="empty"><div class="ei">👥</div>Nessun referente.</p>';
+}
+async function delContact(id){
+  if(!confirm('Eliminare questo referente?'))return;
+  const{error}=await supabaseClient.from('company_contacts').delete().eq('id',id);
+  if(error){alert('Errore nell\'eliminazione: '+error.message);return;}
+  await loadContacts();
 }
 function useClient(id,tipo){
   const c=clients.find(x=>x.id===id&&x.tipo===tipo);if(!c)return;

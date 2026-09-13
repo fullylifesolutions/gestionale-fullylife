@@ -569,6 +569,32 @@ create policy loghi_admin_delete on storage.objects
     for delete to authenticated using (bucket_id = 'loghi' and public.is_admin());
 
 -- ============================================================================
+-- 11. POLICY ADDITIVA su company_contacts (tabella GESPP esistente), stesso
+--     buco già corretto in 7b su companies/persons: le policy GESPP
+--     (contacts_read/contacts_write in gespp_2_funzioni_policy.sql) concedono
+--     accesso solo ad admin o a chi ha un legame consultant_company — un
+--     utente can_bill() non admin e non collegato via consultant_company non
+--     potrebbe leggere né gestire i referenti azienda dal gestionale.
+--     Le policy Postgres per lo stesso comando si combinano in OR: questo
+--     apre un percorso d'accesso aggiuntivo scoped a can_bill(), senza
+--     toccare né restringere l'accesso già concesso ai consulenti/admin
+--     GESPP (stesso principio di companies_billing_*/persons_billing_*).
+--
+--     A differenza di companies/persons (soggetto condiviso, cancellazione
+--     riservata ad admin), qui il DELETE è incluso: un referente è una riga
+--     satellite legata al soggetto, non l'identità condivisa — e GESPP stesso
+--     concede già il delete ai consulenti collegati (contacts_write, "for
+--     all"), quindi non introduce un'asimmetria nuova.
+--
+--     Nessun GRANT esplicito necessario: Supabase applica di default i
+--     privilegi su tutte le tabelle di public a authenticated (verificato
+--     durante il test GDPR, vedi memoria di progetto).
+-- ----------------------------------------------------------------------------
+drop policy if exists contacts_billing_all on public.company_contacts;
+create policy contacts_billing_all on public.company_contacts
+    for all using (public.can_bill()) with check (public.can_bill());
+
+-- ============================================================================
 --  FINE STRATO FATTURAZIONE.
 --
 --  Verificato:
