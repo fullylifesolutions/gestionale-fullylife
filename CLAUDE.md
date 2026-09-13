@@ -1,5 +1,16 @@
 # gestionale-fullylife
 
+## ⚠️ Repo PUBBLICO, live su GitHub Pages — ogni push va in produzione
+
+Questo repo è **pubblico** e pubblicato su GitHub Pages
+(`fullylifesolutions.github.io/gestionale-fullylife/`). **Non esiste una copia
+"solo locale"**: ogni `git push` su `main` aggiorna immediatamente la versione
+che gli utenti reali stanno usando. Non c'è uno stage/preview intermedio.
+Prima di committare/pushare qualunque modifica a `gestionale_fullylife.html`
+o `gestionale_schema.sql`, avvisare esplicitamente l'utente che l'azione
+porterà la modifica LIVE in produzione — non trattarla come un'operazione a
+basso rischio solo perché "è solo un push su GitHub".
+
 ## Contesto: sistema unificato Fullylife Solutions
 
 Questo repo è **un modulo** di un sistema più ampio a **sei domini** che ruotano
@@ -95,5 +106,6 @@ qui — vedi la motivazione del punto 5 della lista dei domini sopra.
 2. [FATTO, ma fuori da questo repo] Work Calendar integrato in GESPP (vedi
    sopra) — non più lavoro di questo repo dopo lo spostamento del 2026-09-08.
 3. (Fuori da questo repo, più avanti) portale unificato con login condiviso
-   tra gestionale/GESPP/slot-booking — richiede prima di pubblicare questo
-   repo su GitHub Pages (oggi privato, non ancora deciso).
+   tra gestionale/GESPP/slot-booking — il repo è ora pubblico e pubblicato su
+   GitHub Pages (vedi avviso in cima al file), quindi questo prerequisito è
+   soddisfatto; resta da fare solo il login condiviso vero e proprio.
