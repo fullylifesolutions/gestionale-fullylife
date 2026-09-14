@@ -2792,7 +2792,7 @@ ${settings.nome||''}`.trim()
 }
 
 // ══ UTILS ══
-function fe(v){return'€ '+Number(v).toFixed(2).replace('.',',');}
+function fe(v){return'€ '+Number(v).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2,useGrouping:true});}
 
 // ══ BACKUP ══
 let restoreData=null;
