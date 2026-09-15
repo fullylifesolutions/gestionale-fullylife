@@ -1324,31 +1324,49 @@ async function removeLogo(e){
   refreshLogoPreview();
 }
 
-function handleFirma(e){
-  alert('Firma digitale: disponibile a breve in questo modulo.');return;
+// ══ FIRMA EMITTENTE (bucket Storage privato "firme", path emitter/<id>.png —
+//    RLS ristretta a can_use_emitter(), niente lettura pubblica a differenza
+//    del logo. I documenti fiscali si generano da sessione autenticata, non
+//    in una window.open() senza sessione: si scarica il file CON la sessione
+//    corrente, si converte in base64 e lo si inserisce inline (vedi prtDoc)
+//    invece di puntare a un URL pubblico. ══
+const FIRMA_MAX_BYTES=1024*1024;
+function firmaPath(emitterId){return'emitter/'+emitterId+'.png';}
+async function fetchFirmaB64(emitterId){
+  if(!emitterId)return null;
+  const{data,error}=await supabaseClient.storage.from('firme').download(firmaPath(emitterId));
+  if(error||!data)return null;
+  return await new Promise(resolve=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve(String(reader.result).split(',')[1]||null);
+    reader.onerror=()=>resolve(null);
+    reader.readAsDataURL(data);
+  });
+}
+async function refreshFirmaPreview(){
+  const fp=document.getElementById('firma-prev'),fr=document.getElementById('firma-rm'),ft=document.getElementById('firma-txt');
+  const b64=await fetchFirmaB64(curId);
+  if(b64){fp.src='data:image/png;base64,'+b64;fp.style.display='block';ft.textContent='';fr.style.display='inline-flex';}
+  else{fp.style.display='none';fr.style.display='none';ft.innerHTML='<strong>Clicca per caricare</strong> la firma (PNG trasparente)';}
+}
+async function handleFirma(e){
   const file=e.target.files[0];if(!file)return;
-  if(file.type!=='image/png'){showMsg('Usa un file PNG con sfondo trasparente','warn');return;}
-  const reader=new FileReader();
-  reader.onload=res=>{
-    const b64=res.target.result.split(',')[1];
-    const p=profiles.find(x=>x.id===curId);
-    if(p){p.firmaB64=b64;localStorage.setItem('mp_profiles',JSON.stringify(profiles));}
-    const prev=document.getElementById('firma-prev');
-    prev.src=res.target.result;prev.style.display='block';
-    document.getElementById('firma-txt').textContent='';
-    document.getElementById('firma-rm').style.display='inline-flex';
-  };
-  reader.readAsDataURL(file);
+  if(file.type!=='image/png'){showMsg('Usa un file PNG con sfondo trasparente','warn');e.target.value='';return;}
+  if(file.size>FIRMA_MAX_BYTES){showMsg('La firma deve pesare al massimo 1MB','warn');e.target.value='';return;}
+  const{error}=await supabaseClient.storage.from('firme').upload(firmaPath(curId),file,{upsert:true,contentType:'image/png'});
+  if(error){alert('Errore nel caricamento della firma: '+error.message);return;}
+  e.target.value='';
+  await refreshFirmaPreview();
 }
-function removeFirma(e){
-  alert('Firma digitale: disponibile a breve in questo modulo.');return;
+async function removeFirma(e){
   e&&e.stopPropagation();
-  const p=profiles.find(x=>x.id===curId);
-  if(p){p.firmaB64=null;localStorage.setItem('mp_profiles',JSON.stringify(profiles));}
-  document.getElementById('firma-prev').style.display='none';
-  document.getElementById('firma-txt').innerHTML='<strong>Clicca per caricare</strong> la firma (PNG trasparente)';
-  document.getElementById('firma-rm').style.display='none';
+  const{error}=await supabaseClient.storage.from('firme').remove([firmaPath(curId)]);
+  if(error){alert('Errore nella rimozione della firma: '+error.message);return;}
+  await refreshFirmaPreview();
 }
+// NB: getCurFirma/profiles[].firmaB64 restano usati SOLO da printNDA (sotto-
+// fase 2, firma consulente — non toccata qui): con la firma emittente ora
+// per-emittente su Storage, questa via resta come prima, disattivata.
 function getCurFirma(pid){
   const id=pid||curId;
   const p=profiles.find(x=>x.id===id)||{};
@@ -2148,13 +2166,10 @@ function loadSF(){
   document.getElementById('s-ateco').value=settings.ateco||'';
   document.getElementById('s-acconto').value=settings.acconto||0;
   renderCP('s-cpick','curr',settings.color||0);
-  const p=curEmitter;
   // Logo organizzativo (bucket pubblico "loghi", indipendente da curEmitter)
   refreshLogoPreview();
-  // Firma
-  const fp=document.getElementById('firma-prev'),fr=document.getElementById('firma-rm');
-  if(p&&p.firmaB64){fp.src='data:image/png;base64,'+p.firmaB64;fp.style.display='block';document.getElementById('firma-txt').textContent='';fr.style.display='inline-flex';}
-  else{fp.style.display='none';fr.style.display='none';document.getElementById('firma-txt').innerHTML='<strong>Clicca per caricare</strong> la firma (PNG trasparente)';}
+  // Firma emittente (bucket privato "firme", per curId)
+  refreshFirmaPreview();
   renderCategorySettings();
 }
 async function saveSettings(){
@@ -2226,11 +2241,16 @@ function openPrint(html){
   w.document.open();w.document.write(cleanHtml);w.document.close();
   w.focus();setTimeout(()=>{try{w.print();}catch(e){}},1000);
 }
-function prtDoc(id,e){
+async function prtDoc(id,e){
   e&&e.stopPropagation();
   const d=docs.find(x=>x.id===id);if(!d)return;
   const n=d.righe.reduce((s,r)=>s+r.qty*r.price,0),iv=n*(d.ivaRate||0)/100,tot=n+iv;
   const s=settings;
+  // Firma emittente: scaricata dallo Storage privato e convertita in base64
+  // PRIMA di aprire la finestra di stampa (che non ha sessione Supabase).
+  // Se l'emittente non ha una firma caricata, fetchFirmaB64 torna null senza
+  // errore: il documento viene generato senza firma.
+  const firmaB64=await fetchFirmaB64(curId);
 
   // Indirizzo mittente completo
   const sAddr=[s.ind,[s.cap,s.comune,s.prov?'('+s.prov.toUpperCase()+')':null].filter(Boolean).join(' ')].filter(Boolean).join(', ');
@@ -2317,7 +2337,7 @@ ${(d.ivaRate===0||!d.ivaRate)&&n>77.47&&d.tipo!=='preventivo'?`<div class="nb" s
 ${d.note?`<div class="nb"><strong>Note:</strong> ${d.note}</div>`:''}
 ${s.iban?`<div class="nb" style="margin-top:3mm"><strong>Pagamento:</strong> Bonifico bancario — IBAN: ${s.iban}</div>`:''}
 ${refNote}${proformaNote}
-${(()=>{const p=profiles.find(x=>x.id===curId);const fb=p&&p.firmaB64?p.firmaB64:null;return fb?`<div style="margin-top:10mm;display:flex;flex-direction:column;align-items:flex-end;width:100%"><p style="font-size:8pt;color:#888;margin-bottom:1mm">Il Consulente: ${s.nome||''}</p><div style="position:relative;width:200px;height:60px"><img src="data:image/png;base64,${fb}" style="position:absolute;bottom:0;left:0;width:200px;max-height:60px;object-fit:contain;object-position:left bottom"></div><div style="border-bottom:1pt solid #999;width:200px"></div></div>`:'';})()}
+${firmaB64?`<div style="margin-top:10mm;display:flex;flex-direction:column;align-items:flex-end;width:100%"><p style="font-size:8pt;color:#888;margin-bottom:1mm">Il Consulente: ${s.nome||''}</p><div style="position:relative;width:200px;height:60px"><img src="data:image/png;base64,${firmaB64}" style="position:absolute;bottom:0;left:0;width:200px;max-height:60px;object-fit:contain;object-position:left bottom"></div><div style="border-bottom:1pt solid #999;width:200px"></div></div>`:''}
 ${s.footer?`<div class="ft">${s.footer}</div>`:''}
 </div></body></html>`);
 }

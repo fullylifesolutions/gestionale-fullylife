@@ -595,6 +595,54 @@ create policy contacts_billing_all on public.company_contacts
     for all using (public.can_bill()) with check (public.can_bill());
 
 -- ============================================================================
+-- 12. FIRMA EMITTENTE — bucket Storage privato "firme"
+--    A differenza del logo (sezione 10: pubblico, path fisso, uguale per
+--    tutti), la firma è per-emittente e NON pubblica: chi può leggerla/
+--    gestirla è deciso da can_use_emitter(emitter_id), la stessa funzione che
+--    già governa emitter_settings/invoices/service_catalog. Path
+--    'emitter/<emitter_id>.png' — upload con upsert lo sostituisce.
+--    I documenti fiscali (prtDoc, frontend) si generano da sessione Supabase
+--    già autenticata (a differenza del logo, mai in una window.open() senza
+--    sessione): si scarica il file con la sessione corrente, si converte in
+--    base64 e lo si inserisce inline PRIMA di aprire la finestra di stampa —
+--    nessun URL pubblico da costruire, quindi nessuna lettura anon.
+-- ----------------------------------------------------------------------------
+insert into storage.buckets (id, name, public)
+values ('firme', 'firme', false)
+on conflict (id) do nothing;
+
+-- Estrae l'emitter_id dal path 'emitter/<uuid>.png'; NULL se il path non
+-- rispetta il formato atteso (niente errore di cast in valutazione RLS —
+-- con emitter_id NULL, can_use_emitter() restringe comunque all'admin).
+create or replace function public.firma_emitter_id(p_path text)
+returns uuid language sql immutable
+as $$
+    select (regexp_match(p_path, '^emitter/([0-9a-fA-F-]{36})\.png$'))[1]::uuid
+$$;
+grant execute on function public.firma_emitter_id(text) to authenticated;
+
+drop policy if exists firme_emitter_read on storage.objects;
+create policy firme_emitter_read on storage.objects
+    for select to authenticated
+    using (bucket_id = 'firme' and public.can_use_emitter(public.firma_emitter_id(name)));
+
+drop policy if exists firme_emitter_insert on storage.objects;
+create policy firme_emitter_insert on storage.objects
+    for insert to authenticated
+    with check (bucket_id = 'firme' and public.can_use_emitter(public.firma_emitter_id(name)));
+
+drop policy if exists firme_emitter_update on storage.objects;
+create policy firme_emitter_update on storage.objects
+    for update to authenticated
+    using (bucket_id = 'firme' and public.can_use_emitter(public.firma_emitter_id(name)))
+    with check (bucket_id = 'firme' and public.can_use_emitter(public.firma_emitter_id(name)));
+
+drop policy if exists firme_emitter_delete on storage.objects;
+create policy firme_emitter_delete on storage.objects
+    for delete to authenticated
+    using (bucket_id = 'firme' and public.can_use_emitter(public.firma_emitter_id(name)));
+
+-- ============================================================================
 --  FINE STRATO FATTURAZIONE.
 --
 --  Verificato:
