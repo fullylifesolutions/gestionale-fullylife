@@ -1343,26 +1343,53 @@ async function fetchFirmaB64(emitterId){
     reader.readAsDataURL(data);
   });
 }
-async function refreshFirmaPreview(){
+function showFirmaPreview(src){
   const fp=document.getElementById('firma-prev'),fr=document.getElementById('firma-rm'),ft=document.getElementById('firma-txt');
+  fp.src=src;fp.style.display='block';ft.textContent='';fr.style.display='inline-flex';
+}
+function hideFirmaPreview(){
+  const fp=document.getElementById('firma-prev'),fr=document.getElementById('firma-rm'),ft=document.getElementById('firma-txt');
+  fp.style.display='none';fr.style.display='none';ft.innerHTML='<strong>Clicca per caricare</strong> la firma (PNG trasparente)';
+}
+// Usata SOLO per il caricamento "a freddo" (apertura della tab impostazioni):
+// dopo un upload/remove appena fatti da noi, l'anteprima si aggiorna dallo
+// stato locale già noto (vedi handleFirma/removeFirma), non ri-scaricando —
+// gli oggetti Storage hanno cache-control di default (mai passato in upload
+// qui sotto), e una remove appena fatta può restare visibile per una breve
+// finestra a un download() immediatamente successivo (cache non ancora
+// invalidata), mentre un upsert la invalida subito: se si richiamasse questa
+// funzione anche dopo remove, l'anteprima rischierebbe di mostrare ancora il
+// file appena cancellato.
+async function refreshFirmaPreview(){
   const b64=await fetchFirmaB64(curId);
-  if(b64){fp.src='data:image/png;base64,'+b64;fp.style.display='block';ft.textContent='';fr.style.display='inline-flex';}
-  else{fp.style.display='none';fr.style.display='none';ft.innerHTML='<strong>Clicca per caricare</strong> la firma (PNG trasparente)';}
+  if(b64)showFirmaPreview('data:image/png;base64,'+b64);else hideFirmaPreview();
 }
 async function handleFirma(e){
   const file=e.target.files[0];if(!file)return;
   if(file.type!=='image/png'){showMsg('Usa un file PNG con sfondo trasparente','warn');e.target.value='';return;}
   if(file.size>FIRMA_MAX_BYTES){showMsg('La firma deve pesare al massimo 1MB','warn');e.target.value='';return;}
-  const{error}=await supabaseClient.storage.from('firme').upload(firmaPath(curId),file,{upsert:true,contentType:'image/png'});
+  const emitterId=curId;
+  const{error}=await supabaseClient.storage.from('firme').upload(firmaPath(emitterId),file,{upsert:true,contentType:'image/png'});
   if(error){alert('Errore nel caricamento della firma: '+error.message);return;}
   e.target.value='';
-  await refreshFirmaPreview();
+  // Anteprima dal file appena caricato in locale, non da un ri-download:
+  // evita di dipendere dalla propagazione lato Storage/cache appena scritta.
+  const reader=new FileReader();
+  reader.onload=()=>showFirmaPreview(String(reader.result));
+  reader.readAsDataURL(file);
 }
 async function removeFirma(e){
   e&&e.stopPropagation();
-  const{error}=await supabaseClient.storage.from('firme').remove([firmaPath(curId)]);
+  const emitterId=curId;
+  const{data,error}=await supabaseClient.storage.from('firme').remove([firmaPath(emitterId)]);
   if(error){alert('Errore nella rimozione della firma: '+error.message);return;}
-  await refreshFirmaPreview();
+  // remove() non segnala errore se il path non esiste o se la RLS filtra la
+  // riga: ritorna semplicemente data=[] ("0 file cancellati") con error=null.
+  // Senza questo controllo la funzione "riesce" senza aver cancellato nulla.
+  if(!data||!data.length){alert('Nessuna firma trovata da rimuovere per questo emittente (percorso: '+firmaPath(emitterId)+').');return;}
+  // Nasconde l'anteprima dallo stato noto (cancellazione confermata sopra),
+  // senza ri-scaricare: vedi nota su refreshFirmaPreview.
+  hideFirmaPreview();
 }
 // NB: getCurFirma/profiles[].firmaB64 restano usati SOLO da printNDA (sotto-
 // fase 2, firma consulente — non toccata qui): con la firma emittente ora
