@@ -606,10 +606,17 @@ create policy contacts_billing_all on public.company_contacts
 --    sessione): si scarica il file con la sessione corrente, si converte in
 --    base64 e lo si inserisce inline PRIMA di aprire la finestra di stampa —
 --    nessun URL pubblico da costruire, quindi nessuna lettura anon.
+--    Doppia barriera su tipo/dimensione: il frontend controlla già PNG e max
+--    1MB prima dell'upload, ma file_size_limit/allowed_mime_types sul bucket
+--    fanno rispettare lo stesso limite anche lato Storage, indipendentemente
+--    dal client (accesso diretto alle API, bypass del frontend, ecc.).
 -- ----------------------------------------------------------------------------
-insert into storage.buckets (id, name, public)
-values ('firme', 'firme', false)
-on conflict (id) do nothing;
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('firme', 'firme', false, 1048576, array['image/png'])
+on conflict (id) do update
+set public = excluded.public,
+    file_size_limit = excluded.file_size_limit,
+    allowed_mime_types = excluded.allowed_mime_types;
 
 -- Estrae l'emitter_id dal path 'emitter/<uuid>.png'; NULL se il path non
 -- rispetta il formato atteso (niente errore di cast in valutazione RLS —
