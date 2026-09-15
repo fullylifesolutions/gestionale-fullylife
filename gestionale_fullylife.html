@@ -650,7 +650,7 @@ textarea{resize:vertical;min-height:58px}
   </div>
   <!-- FIRMA -->
   <div class="card">
-    <div class="card-head"><div class="hl"><div class="ci">✍️</div><div><h3>Firma digitale</h3><p>PNG con sfondo trasparente — usata nei documenti legali (NDA, accordi)</p></div></div></div>
+    <div class="card-head"><div class="hl"><div class="ci">✍️</div><div><h3>Firma digitale</h3><p>PNG con sfondo trasparente — usata nei documenti fiscali (preventivi, fatture, proforma)</p></div></div></div>
     <div class="card-body">
       <div class="logo-drop" id="firma-drop">
         <input type="file" accept="image/png" onchange="handleFirma(event)">
@@ -659,6 +659,12 @@ textarea{resize:vertical;min-height:58px}
         <button id="firma-rm" class="btn btn-sm btn-danger" style="display:none;position:relative;z-index:2" onclick="removeFirma(event)">Rimuovi firma</button>
       </div>
     </div>
+  </div>
+  <!-- FIRME CONSULENTI (solo admin): l'admin carica/sostituisce/rimuove la
+       firma di ciascun consulente attivo, usata negli accordi NDA -->
+  <div class="card" id="firme-consulenti-card" style="display:none">
+    <div class="card-head"><div class="hl"><div class="ci">🖋️</div><div><h3>Firme consulenti</h3><p>PNG con sfondo trasparente per ciascun consulente — usate negli accordi NDA</p></div></div></div>
+    <div class="card-body" id="firme-consulenti-list"></div>
   </div>
   <div class="card">
     <div class="card-head"><div class="hl"><div class="ci">🏢</div><div><h3>Dati professionali</h3><p>Intestazione dei documenti</p></div></div></div>
@@ -675,6 +681,12 @@ textarea{resize:vertical;min-height:58px}
         <div class="field"><label>Comune</label><input type="text" id="s-comune" placeholder="Milano"></div>
         <div class="field"><label>Provincia (sigla)</label><input type="text" id="s-prov" placeholder="MI" maxlength="2" style="text-transform:uppercase"></div>
         <div class="field"><label>IBAN</label><input type="text" id="s-iban"></div>
+      </div>
+      <!-- Titolare (solo admin): collega questo emittente a un app_user per
+           l'arricchimento fiscale dei consulenti nell'NDA (owner_id) -->
+      <div class="field" id="s-titolare-wrap" style="display:none;margin-bottom:11px">
+        <label>Titolare (per NDA — collega questo emittente a un consulente)</label>
+        <select id="s-titolare"><option value="">— Nessuno —</option></select>
       </div>
       <div class="sep"></div>
       <p style="font-size:.7rem;font-weight:600;color:var(--ink-2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Fattura Elettronica (SDI)</p>
@@ -780,11 +792,11 @@ textarea{resize:vertical;min-height:58px}
       <div class="grid2" style="margin-bottom:14px">
         <div class="field">
           <label>Consulente 1</label>
-          <select id="nda-c1" onchange="fillNdaConsulente(1)"><option value="">— Seleziona profilo —</option></select>
+          <select id="nda-c1" onchange="fillNdaConsulente(1)"><option value="">— Seleziona consulente —</option></select>
         </div>
         <div class="field">
           <label>Consulente 2</label>
-          <select id="nda-c2" onchange="fillNdaConsulente(2)"><option value="">— Seleziona profilo —</option></select>
+          <select id="nda-c2" onchange="fillNdaConsulente(2)"><option value="">— Seleziona consulente —</option></select>
         </div>
         <div class="field">
           <label>Azienda cliente</label>
@@ -1332,9 +1344,8 @@ async function removeLogo(e){
 //    invece di puntare a un URL pubblico. ══
 const FIRMA_MAX_BYTES=1024*1024;
 function firmaPath(emitterId){return'emitter/'+emitterId+'.png';}
-async function fetchFirmaB64(emitterId){
-  if(!emitterId)return null;
-  const{data,error}=await supabaseClient.storage.from('firme').download(firmaPath(emitterId));
+async function downloadFirmaB64(path){
+  const{data,error}=await supabaseClient.storage.from('firme').download(path);
   if(error||!data)return null;
   return await new Promise(resolve=>{
     const reader=new FileReader();
@@ -1342,6 +1353,15 @@ async function fetchFirmaB64(emitterId){
     reader.onerror=()=>resolve(null);
     reader.readAsDataURL(data);
   });
+}
+async function fetchFirmaB64(emitterId){
+  if(!emitterId)return null;
+  return downloadFirmaB64(firmaPath(emitterId));
+}
+function firmaConsulentePath(userId){return'consulente/'+userId+'.png';}
+async function fetchFirmaConsulenteB64(userId){
+  if(!userId)return null;
+  return downloadFirmaB64(firmaConsulentePath(userId));
 }
 function showFirmaPreview(src){
   const fp=document.getElementById('firma-prev'),fr=document.getElementById('firma-rm'),ft=document.getElementById('firma-txt');
@@ -1391,13 +1411,73 @@ async function removeFirma(e){
   // senza ri-scaricare: vedi nota su refreshFirmaPreview.
   hideFirmaPreview();
 }
-// NB: getCurFirma/profiles[].firmaB64 restano usati SOLO da printNDA (sotto-
-// fase 2, firma consulente — non toccata qui): con la firma emittente ora
-// per-emittente su Storage, questa via resta come prima, disattivata.
-function getCurFirma(pid){
-  const id=pid||curId;
-  const p=profiles.find(x=>x.id===id)||{};
-  return p.firmaB64||null;
+
+// Titolare dell'emittente (owner_id, solo admin): collega emitter_settings
+// a un app_user, usato da getNdaConsulenteData/fetchEmitterByOwner per
+// arricchire CF/P.IVA/PEC/residenza dei consulenti nell'NDA. Senza questo
+// collegamento popolato, quei campi restano vuoti anche se l'emittente ha
+// tutti i dati fiscali — non c'è modo di risalire dall'app_user all'emittente.
+async function renderTitolareSelect(){
+  const wrap=document.getElementById('s-titolare-wrap');
+  if(!wrap)return;
+  if(!isAdmin){wrap.style.display='none';return;}
+  wrap.style.display='';
+  const sel=document.getElementById('s-titolare');
+  const{data,error}=await supabaseClient.rpc('consulenti_nda_disponibili');
+  if(error){sel.innerHTML='<option value="">— Errore nel caricamento —</option>';return;}
+  sel.innerHTML='<option value="">— Nessuno —</option>'+
+    (data||[]).map(u=>`<option value="${u.id}">${u.nome} ${u.cognome}</option>`).join('');
+  sel.value=(curEmitter&&curEmitter.owner_id)||'';
+}
+
+// ══ FIRME CONSULENTI (solo admin, path consulente/<user_id>.png — vedi
+//    policy firme_consulente_* in gestionale_schema.sql sezione 13). Non è
+//    autogestione: l'admin carica/sostituisce/rimuove la firma di ciascun
+//    consulente attivo, usata da printNDA. ══
+async function renderFirmeConsulenti(){
+  const card=document.getElementById('firme-consulenti-card');
+  if(!card)return;
+  if(!isAdmin){card.style.display='none';return;}
+  const{data,error}=await supabaseClient.rpc('consulenti_nda_disponibili');
+  if(error){card.style.display='none';return;}
+  card.style.display='';
+  const list=document.getElementById('firme-consulenti-list');
+  list.innerHTML=(data||[]).map(u=>`
+    <div class="logo-drop" style="margin-bottom:10px">
+      <input type="file" accept="image/png" onchange="handleFirmaConsulente('${u.id}',event)">
+      <img id="fc-prev-${u.id}" style="max-height:70px;max-width:220px;object-fit:contain;display:none">
+      <div id="fc-txt-${u.id}" class="logo-drop-txt"><strong>${u.nome} ${u.cognome}</strong> — clicca per caricare la firma (PNG trasparente)</div>
+      <button id="fc-rm-${u.id}" class="btn btn-sm btn-danger" style="display:none;position:relative;z-index:2" onclick="removeFirmaConsulente('${u.id}',event)">Rimuovi firma</button>
+    </div>`).join('');
+  // Anteprime a freddo: unica occasione in cui si ri-scarica dal network
+  // (vedi nota sopra su refreshFirmaPreview per la stessa cautela sulla
+  // cache appena scritta).
+  await Promise.all((data||[]).map(async u=>{
+    const b64=await fetchFirmaConsulenteB64(u.id);
+    if(!b64)return;
+    const fp=document.getElementById('fc-prev-'+u.id),fr=document.getElementById('fc-rm-'+u.id);
+    fp.src='data:image/png;base64,'+b64;fp.style.display='block';fr.style.display='inline-flex';
+  }));
+}
+async function handleFirmaConsulente(userId,e){
+  const file=e.target.files[0];if(!file)return;
+  if(file.type!=='image/png'){showMsg('Usa un file PNG con sfondo trasparente','warn');e.target.value='';return;}
+  if(file.size>FIRMA_MAX_BYTES){showMsg('La firma deve pesare al massimo 1MB','warn');e.target.value='';return;}
+  const{error}=await supabaseClient.storage.from('firme').upload(firmaConsulentePath(userId),file,{upsert:true,contentType:'image/png'});
+  if(error){alert('Errore nel caricamento della firma: '+error.message);return;}
+  e.target.value='';
+  const fp=document.getElementById('fc-prev-'+userId),fr=document.getElementById('fc-rm-'+userId);
+  const reader=new FileReader();
+  reader.onload=()=>{fp.src=String(reader.result);fp.style.display='block';fr.style.display='inline-flex';};
+  reader.readAsDataURL(file);
+}
+async function removeFirmaConsulente(userId,e){
+  e&&e.stopPropagation();
+  const{data,error}=await supabaseClient.storage.from('firme').remove([firmaConsulentePath(userId)]);
+  if(error){alert('Errore nella rimozione della firma: '+error.message);return;}
+  if(!data||!data.length){alert('Nessuna firma trovata da rimuovere per questo consulente.');return;}
+  const fp=document.getElementById('fc-prev-'+userId),fr=document.getElementById('fc-rm-'+userId);
+  fp.style.display='none';fr.style.display='none';
 }
 
 // ══ NAV ══
@@ -2197,6 +2277,10 @@ function loadSF(){
   refreshLogoPreview();
   // Firma emittente (bucket privato "firme", per curId)
   refreshFirmaPreview();
+  // Firme consulenti (solo admin)
+  renderFirmeConsulenti();
+  // Titolare emittente, per l'arricchimento fiscale nell'NDA (solo admin)
+  renderTitolareSelect();
   renderCategorySettings();
 }
 async function saveSettings(){
@@ -2232,6 +2316,14 @@ async function saveSettings(){
     aliquota_irpef:settings.irpef,aliquota_inps:settings.inps,coeff_redditivita:settings.coeff,
     ateco:settings.ateco,acconto:settings.acconto,color_index:settings.color
   };
+  // owner_id solo se admin: il campo è nascosto per i non-admin, ma
+  // l'elemento resta nel DOM — leggerlo comunque rischierebbe di azzerare
+  // il titolare già impostato ad ogni salvataggio fatto da un operatore
+  // non-admin.
+  if(isAdmin){
+    const tSel=document.getElementById('s-titolare');
+    payload.owner_id=tSel&&tSel.value?tSel.value:null;
+  }
   const {data,error}=await supabaseClient.from('emitter_settings').update(payload).eq('id',curId).select().single();
   if(error){alert('Errore nel salvataggio delle impostazioni: '+error.message);return;}
   curEmitter=data;
@@ -3324,18 +3416,24 @@ function getCatColor(nomeCat){
 }
 
 // ══ DOCUMENTI LEGALI — NDA ══
-function initNDA(){
+let ndaConsulenti=[];
+async function initNDA(){
   const c1=document.getElementById('nda-c1');
   const c2=document.getElementById('nda-c2');
-  if(!c1||!c2)return;
-  const opts='<option value="">— Seleziona profilo —</option>'+
-    profiles.map(p=>`<option value="${p.id}">${p.nome}</option>`).join('');
-  c1.innerHTML=opts;c2.innerHTML=opts;
+  if(c1&&c2){
+    const{data,error}=await supabaseClient.rpc('consulenti_nda_disponibili');
+    if(error){alert('Errore nel caricamento dei consulenti: '+error.message);}
+    ndaConsulenti=data||[];
+    const opts='<option value="">— Seleziona consulente —</option>'+
+      ndaConsulenti.map(u=>`<option value="${u.id}">${[u.nome,u.cognome].filter(Boolean).join(' ')}</option>`).join('');
+    c1.innerHTML=opts;c2.innerHTML=opts;
+  }
   const cc=document.getElementById('nda-cli');
   if(cc) cc.innerHTML='<option value="">— Seleziona cliente —</option>'+
     clients.map((c,i)=>`<option value="${i}">${c.nome}</option>`).join('');
   document.getElementById('nda-data').value=new Date().toISOString().slice(0,10);
-  // Popola checklist scheda consulente
+  // Popola checklist scheda consulente (resta su profiles/emittenti — la
+  // Scheda Consulente non è toccata da questa sotto-fase)
   const cl=document.getElementById('scheda-checklist');
   if(cl) cl.innerHTML=profiles.map(p=>`
     <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:7px 10px;border-radius:var(--r8);border:1px solid var(--border);background:var(--bg)">
@@ -3344,7 +3442,7 @@ function initNDA(){
     </label>`).join('');
 }
 
-// Dati fiscali di un emittente per Scheda Consulente/NDA: interrogati da
+// Dati fiscali di un emittente per Scheda Consulente: interrogati da
 // emitter_settings (Supabase), non più da mp_<pid>_settings (mai più scritta
 // dal Modulo 1 in poi — leggerla dava sempre dati vuoti).
 async function fetchEmitterById(pid){
@@ -3397,15 +3495,23 @@ async function printSchedaConsulente(){
   openPrint(html);
 }
 
-async function getNdaProfileData(pid){
-  const e=await fetchEmitterById(pid);
-  if(!e)return{};
+// Arricchisce nome/cognome (app_users, via RPC già in cache in ndaConsulenti)
+// con i dati fiscali dell'emitter_settings collegato (owner_id), quando
+// esiste — non tutti i consulenti sono anche emittenti (oggi: solo Bruno e
+// Simona lo sono entrambi).
+async function fetchEmitterByOwner(userId){
+  const{data,error}=await supabaseClient.from('emitter_settings').select('*').eq('owner_id',userId).maybeSingle();
+  if(error||!data)return null;
+  return data;
+}
+async function getNdaConsulenteData(u){
+  const e=await fetchEmitterByOwner(u.id);
   return{
-    nome:e.denominazione||'',
-    cf:e.codice_fiscale||'',
-    piva:e.partita_iva||'',
-    ind:(e.indirizzo?e.indirizzo+', ':'')+[e.cap,e.comune,e.provincia].filter(Boolean).join(' '),
-    pec:e.pec||''
+    nome:[u.nome,u.cognome].filter(Boolean).join(' '),
+    cf:e?.codice_fiscale||'',
+    piva:e?.partita_iva||'',
+    ind:e?(e.indirizzo?e.indirizzo+', ':'')+[e.cap,e.comune,e.provincia].filter(Boolean).join(' '):'',
+    pec:e?.pec||''
   };
 }
 
@@ -3421,8 +3527,10 @@ async function printNDA(){
   if(!pid1||!pid2){showMsg('Seleziona entrambi i consulenti','warn');return;}
   if(cliIdx===''){showMsg('Seleziona il cliente','warn');return;}
 
-  const c1=await getNdaProfileData(pid1);
-  const c2=await getNdaProfileData(pid2);
+  const u1=ndaConsulenti.find(u=>u.id===pid1)||{id:pid1,nome:'',cognome:''};
+  const u2=ndaConsulenti.find(u=>u.id===pid2)||{id:pid2,nome:'',cognome:''};
+  const c1=await getNdaConsulenteData(u1);
+  const c2=await getNdaConsulenteData(u2);
   const cli=clients[parseInt(cliIdx)]||{};
   const luogo=cli.comune||'_______________';
   const dataIT=fmtDateIT(dataVal)||'_______________';
@@ -3440,8 +3548,8 @@ async function printNDA(){
     </div>`;
   };
 
-  const firma1=getCurFirma(pid1);
-  const firma2=getCurFirma(pid2);
+  const firma1=await fetchFirmaConsulenteB64(pid1);
+  const firma2=await fetchFirmaConsulenteB64(pid2);
 
   const html=`<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Accordo di Riservatezza NDA</title>
 <style>

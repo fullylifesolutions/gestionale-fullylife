@@ -650,6 +650,68 @@ create policy firme_emitter_delete on storage.objects
     using (bucket_id = 'firme' and public.can_use_emitter(public.firma_emitter_id(name)));
 
 -- ============================================================================
+-- 13. FIRMA CONSULENTE — path consulente/<user_id>.png nel bucket "firme"
+--    Riusa il bucket "firme" già creato in sezione 12 (nessun secondo
+--    insert/on-conflict necessario). A differenza della firma emittente
+--    (can_use_emitter, più operatori possibili), qui la regola è UNICA e
+--    più stretta per scelta esplicita: SOLO is_admin(), per read/insert/
+--    update/delete. Non è ogni consulente a caricare la propria firma — è
+--    l'admin (Bruno) a caricare/sostituire/rimuovere la firma di ciascun
+--    consulente da un'area dedicata nelle impostazioni, ed è sempre l'admin
+--    a generare gli NDA (Simona non genera NDA). Path
+--    'consulente/<user_id>.png' — upload con upsert lo sostituisce.
+--
+--    Isolamento per prefisso verificato nei due sensi: queste policy non
+--    toccano mai 'emitter/...' (controllano split_part(name,'/',1)=
+--    'consulente', sempre falso su quei path), e le policy emitter esistenti
+--    concedono sui path 'consulente/...' solo l'accesso admin (la regex di
+--    firma_emitter_id() non matcha '^emitter/...', torna NULL, e
+--    can_use_emitter(NULL) collassa a solo is_admin()) — stesso risultato di
+--    queste, non un accesso ulteriore.
+-- ----------------------------------------------------------------------------
+drop policy if exists firme_consulente_read on storage.objects;
+create policy firme_consulente_read on storage.objects
+    for select to authenticated
+    using (bucket_id = 'firme' and split_part(name, '/', 1) = 'consulente' and public.is_admin());
+
+drop policy if exists firme_consulente_insert on storage.objects;
+create policy firme_consulente_insert on storage.objects
+    for insert to authenticated
+    with check (bucket_id = 'firme' and split_part(name, '/', 1) = 'consulente' and public.is_admin());
+
+drop policy if exists firme_consulente_update on storage.objects;
+create policy firme_consulente_update on storage.objects
+    for update to authenticated
+    using (bucket_id = 'firme' and split_part(name, '/', 1) = 'consulente' and public.is_admin())
+    with check (bucket_id = 'firme' and split_part(name, '/', 1) = 'consulente' and public.is_admin());
+
+drop policy if exists firme_consulente_delete on storage.objects;
+create policy firme_consulente_delete on storage.objects
+    for delete to authenticated
+    using (bucket_id = 'firme' and split_part(name, '/', 1) = 'consulente' and public.is_admin());
+
+-- Lista consulenti selezionabili per NDA (RPC, non select diretta su
+-- app_users): la RLS di app_users (id = auth.uid() or is_admin(), da GESPP)
+-- impedirebbe a chiunque non-admin di vedere le righe altrui. Gate
+-- is_admin() anche qui (non solo can_bill()): coerente con le policy sopra
+-- — solo Bruno genera NDA, quindi solo Bruno vede la lista popolata, invece
+-- di uno stato confuso (select pieni, firme sempre vuote per chiunque
+-- altro).
+create or replace function public.consulenti_nda_disponibili()
+returns table(id uuid, nome text, cognome text, ruolo user_role)
+language sql stable security definer set search_path = public
+set row_security = off
+as $$
+    select u.id, u.nome, u.cognome, u.ruolo
+    from public.app_users u
+    where u.attivo
+      and u.ruolo in ('consulente','admin')
+      and public.is_admin()
+    order by u.cognome, u.nome;
+$$;
+grant execute on function public.consulenti_nda_disponibili() to authenticated;
+
+-- ============================================================================
 --  FINE STRATO FATTURAZIONE.
 --
 --  Verificato:
