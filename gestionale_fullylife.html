@@ -813,6 +813,26 @@ textarea{resize:vertical;min-height:58px}
       </button>
     </div>
   </div>
+  <!-- MOTORE TEMPLATE LEGALI (Fase 3, nuovo): affianca la card NDA sopra
+       finché non è validato dal test di fedeltà — non la sostituisce ancora -->
+  <div class="card" style="margin-top:16px">
+    <div class="card-head"><div class="hl"><div class="ci">📄</div><div><h3>Documento legale (nuovo motore, in verifica)</h3><p>Genera un documento legale da template — la lista attori si adatta al template scelto</p></div></div></div>
+    <div class="card-body">
+      <div class="field" style="margin-bottom:14px">
+        <label>Tipo di accordo</label>
+        <select id="legal-tpl" onchange="onLegalTemplateChange()"><option value="">— Seleziona template —</option></select>
+      </div>
+      <div id="legal-attori-fields" class="grid2" style="margin-bottom:14px"></div>
+      <div class="field" style="margin-bottom:14px">
+        <label>Data stipula</label>
+        <input type="date" id="legal-data">
+      </div>
+      <button class="btn btn-primary" onclick="printLegalDoc()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6,9 6,2 18,2 18,9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+        Genera PDF
+      </button>
+    </div>
+  </div>
   <div class="card" style="margin-top:16px">
     <div class="card-head"><div class="hl"><div class="ci">👤</div><div><h3>Scheda Consulente</h3><p>Genera un PDF con i dati anagrafici e fiscali da inviare alle aziende per la registrazione in anagrafica fornitori</p></div></div></div>
     <div class="card-body">
@@ -1498,7 +1518,7 @@ function goTo(s){
   if(s==='documenti') renderDocList();
   if(s==='catalogo'){populateCatSelect();refreshCatalog();}
   if(s==='clienti') renderCliList();
-  if(s==='legali') initNDA();
+  if(s==='legali'){initNDA().then(initLegalEngine);}
   if(s==='impostazioni') loadSF();
   if(s==='utenti') renderUtenti();
 }
@@ -3511,7 +3531,11 @@ async function getNdaConsulenteData(u){
     cf:e?.codice_fiscale||'',
     piva:e?.partita_iva||'',
     ind:e?(e.indirizzo?e.indirizzo+', ':'')+[e.cap,e.comune,e.provincia].filter(Boolean).join(' '):'',
-    pec:e?.pec||''
+    pec:e?.pec||'',
+    // Aggiunto per il motore template (Fase 3, {{<SLOT>_QUALIFICA}}): campo
+    // additivo, non usato da printNDA (che legge solo nome/cf/piva/ind/pec)
+    // — nessun impatto sul vecchio NDA.
+    qualifica:e?.role_label||''
   };
 }
 
@@ -3643,6 +3667,206 @@ async function printNDA(){
 
 </div><\/body><\/html>`;
 
+  openPrint(html);
+}
+
+// ══ MOTORE TEMPLATE LEGALI (Fase 3) — legge da legal_templates, sostituisce
+//    i segnaposto {{...}} con i dati degli attori selezionati, genera via
+//    openPrint(). Affianca printNDA() finché non è validato dal test di
+//    fedeltà (NDA SRC vecchio vs nuovo devono coincidere) — non lo tocca,
+//    non lo sostituisce. ══
+let legalTemplates=[];
+let curLegalTemplate=null;
+async function initLegalEngine(){
+  const sel=document.getElementById('legal-tpl');
+  if(!sel)return;
+  const{data,error}=await supabaseClient.from('legal_templates').select('*').eq('attivo',true).order('nome');
+  if(error){alert('Errore nel caricamento dei template legali: '+error.message);return;}
+  legalTemplates=data||[];
+  curLegalTemplate=null;
+  sel.innerHTML='<option value="">— Seleziona template —</option>'+
+    legalTemplates.map(t=>`<option value="${t.id}">${t.nome}</option>`).join('');
+  document.getElementById('legal-attori-fields').innerHTML='';
+  document.getElementById('legal-data').value=new Date().toISOString().slice(0,10);
+}
+// Deriva la UI di selezione dagli 'attori' del template scelto — nessun
+// campo cablato "2 consulenti + azienda": un template con attori diversi
+// genera la UI giusta senza modifiche a questa funzione.
+function onLegalTemplateChange(){
+  const id=document.getElementById('legal-tpl').value;
+  curLegalTemplate=legalTemplates.find(t=>t.id===id)||null;
+  const box=document.getElementById('legal-attori-fields');
+  if(!curLegalTemplate){box.innerHTML='';return;}
+  const attori=curLegalTemplate.attori||[];
+  box.innerHTML=attori.map(a=>{
+    const opts=a.tipo==='consulente'
+      ?ndaConsulenti.map(u=>`<option value="${u.id}">${[u.nome,u.cognome].filter(Boolean).join(' ')}</option>`).join('')
+      :clients.map((c,i)=>`<option value="${i}">${c.nome}</option>`).join('');
+    return`<div class="field"><label>${a.label||a.slot}</label><select id="legal-attore-${a.slot}"><option value="">— Seleziona —</option>${opts}</select></div>`;
+  }).join('');
+}
+// Segnaposto prodotti per UN attore. consulente: NOME/QUALIFICA/PIVA/CF/
+// STUDIO/PEC da app_users+emitter_settings (riusa getNdaConsulenteData,
+// stesso identico calcolo di STUDIO di printNDA). azienda/cliente:
+// DENOMINAZIONE/NOME/PIVA_CF/INDIRIZZO/RESP_LEGALE/PEC da clients — la
+// composizione di INDIRIZZO replica esattamente quella usata oggi da
+// printNDA per "Sede legale" (join semplice dei 4 campi), diversa da quella
+// di STUDIO: non è un'incoerenza introdotta qui, è il comportamento
+// esistente che la fedeltà impone di riprodurre com'è.
+//
+// Ogni campo dato (non le firme) passa da nbsp(): il vecchio row() di
+// printNDA aveva un fallback val||'&nbsp;' — una cella vuota nella tabella
+// mostra &nbsp;, non stringa vuota, per non perdere il bordo della riga.
+// Qui il fallback si applica genericamente a tutti i campi attore (non a
+// FIRMA_<SLOT>, che nel vecchio firma() restava vuoto senza fallback): per
+// NDA SRC riproduce esattamente il comportamento originale; per un
+// template a prosa come NDA Generale, un campo vuoto diventa uno spazio
+// invisibile invece di un buco nel testo — effetto collaterale minore,
+// accettato per non duplicare la logica per template.
+function nbsp(v){return v||'&nbsp;';}
+// Etichette leggibili per i messaggi di campo mancante (validazione
+// 'obbligatori' sotto) — chiavi = nome campo SENZA prefisso slot.
+const FIELD_LABELS={NOME:'Nome',QUALIFICA:'Qualifica',PIVA:'P.IVA',CF:'Codice Fiscale',
+  STUDIO:'Studio/indirizzo',DENOMINAZIONE:'Denominazione',PIVA_CF:'P.IVA/C.F.',
+  INDIRIZZO:'Indirizzo',RESP_LEGALE:'Rappresentante legale',PEC:'PEC'};
+// Dati GREZZI (pre-nbsp) di UN attore: 'raw' ha le chiavi corte (NOME, PIVA,
+// ...) senza prefisso slot, usate sia per la validazione 'obbligatori' sia
+// per costruire la sostituzione finale. 'subject' è il nome da mostrare
+// nell'eventuale messaggio di campo mancante.
+async function buildAttoreData(actor, selId){
+  if(actor.tipo==='consulente'){
+    const u=ndaConsulenti.find(x=>x.id===selId)||{id:selId,nome:'',cognome:''};
+    const d=await getNdaConsulenteData(u);
+    let firma='';
+    if(actor.firma){
+      const b64=await fetchFirmaConsulenteB64(selId);
+      // Markup differenziato per layout del contenitore firma, non cablato
+      // uguale per tutti i template. Default (nessun firma_layout sull'
+      // attore, il caso di SRC oggi) = markup invariato: position:absolute
+      // dentro il box position:relative;height:70px del corpo SRC — non
+      // tocco né il corpo né gli attori di SRC, zero rischio sulla
+      // fedeltà. firma_layout:"relativo" (opt-in per template a prosa
+      // come il Generale) = immagine in flusso normale, per contenitori
+      // .firma-blocco senza position:relative dove l'assoluto ancorava
+      // alla pagina invece che al blocco.
+      if(b64){
+        firma=(actor.firma_layout==='relativo')
+          ?`<img src="data:image/png;base64,${b64}" style="display:block;max-width:200px;max-height:60px;object-fit:contain;margin-bottom:4px">`
+          :`<img src="data:image/png;base64,${b64}" style="position:absolute;bottom:0;left:0;width:280px;max-height:70px;object-fit:contain;object-position:left bottom">`;
+      }
+    }
+    return{subject:d.nome||actor.label||actor.slot, firma,
+      raw:{NOME:d.nome,QUALIFICA:d.qualifica,PIVA:d.piva,CF:d.cf,STUDIO:d.ind,PEC:d.pec}};
+  } else if(actor.tipo==='azienda'||actor.tipo==='cliente'){
+    const cli=clients[parseInt(selId)]||{};
+    return{subject:cli.nome||actor.label||actor.slot, firma:'',
+      raw:{
+        DENOMINAZIONE:cli.nome||'', NOME:cli.nome||'', PIVA_CF:cli.piva||'',
+        INDIRIZZO:[cli.ind,cli.cap,cli.comune,cli.prov].filter(Boolean).join(', '),
+        RESP_LEGALE:cli.respLegale||'', PEC:cli.pecSdi||''
+      }};
+  }
+  return{subject:actor.label||actor.slot, firma:'', raw:{}};
+}
+// Prende template.corpo e sostituisce ogni segnaposto con i dati letti per
+// gli attori selezionati (selezioni: {slot: idSelezionato, __data: 'YYYY-MM-DD'}).
+//
+// Validazione 'obbligatori': ogni attore può dichiarare, nel proprio JSON in
+// legal_templates.attori, un array "obbligatori":["CAMPO",...] — SOLO i
+// campi lì elencati bloccano la generazione se vuoti (nome soggetto
+// nominato nell'avviso). Un attore SENZA quella chiave (SRC oggi, per
+// nessuno dei suoi attori) non blocca mai nulla — stesso comportamento di
+// sempre, valore vuoto sostituito con &nbsp; via nbsp(). La stessa "STUDIO"
+// o "RESP_LEGALE" può quindi essere obbligatoria in un template e
+// facoltativa in un altro, senza una mappa globale per campo.
+//
+// Se al termine resta un {{...}} non risolto (segnaposto nel corpo senza
+// dato corrispondente), ritorna null e avvisa invece di generare un
+// documento con buchi — rete di sicurezza indipendente da 'obbligatori'.
+async function renderLegalDoc(template, selezioni){
+  let corpo=template.corpo;
+  let luogo='';
+  const datiAttori=[];
+  for(const actor of (template.attori||[])){
+    const selId=selezioni[actor.slot];
+    const dati=await buildAttoreData(actor, selId);
+    datiAttori.push({actor,dati});
+    if((actor.tipo==='azienda'||actor.tipo==='cliente')&&!luogo){
+      luogo=(clients[parseInt(selId)]||{}).comune||'';
+    }
+  }
+
+  for(const{actor,dati} of datiAttori){
+    for(const campo of (actor.obbligatori||[])){
+      if(!dati.raw[campo]){
+        const label=FIELD_LABELS[campo]||campo;
+        showMsg(label+' mancante per '+dati.subject+' — completare le impostazioni.','warn');
+        return null;
+      }
+    }
+  }
+
+  for(const{actor,dati} of datiAttori){
+    const slot=actor.slot;
+    Object.entries(dati.raw).forEach(([k,v])=>{corpo=corpo.split('{{'+slot+'_'+k+'}}').join(nbsp(v));});
+    if(actor.firma){corpo=corpo.split('{{FIRMA_'+slot+'}}').join(dati.firma);}
+  }
+  const dataIT=fmtDateIT(selezioni.__data)||'_______________';
+  corpo=corpo.split('{{LUOGO_DATA}}').join((luogo||'_______________')+', '+dataIT);
+
+  const rimasti=corpo.match(/\{\{[^}]+\}\}/g);
+  if(rimasti&&rimasti.length){
+    showMsg('Documento non generato: segnaposto non risolti — '+[...new Set(rimasti)].join(', '),'warn');
+    return null;
+  }
+  return corpo;
+}
+// Foglio di stile condiviso: valori ripresi VERBATIM dal <style> di
+// printNDA() per le classi comuni (.page/.parti-block/.parti-label/table/
+// h1/.sub/h2/p,li/ol/.firma-row/.luogo-data/@media print) — nessun valore
+// reinventato, per garantire la fedeltà visiva richiesta dal test di
+// accettazione. Le classi usate SOLO da NDA Generale (.doc/.closing/.firme/
+// .firma-blocco/.firma-vuota) non hanno un precedente in printNDA né in
+// printSchedaConsulente con lo stesso significato — printSchedaConsulente
+// usa .page/h1/.sub/table con VALORI DIVERSI (max-width 680 vs 700,
+// font-size h1 18pt vs 16pt, ecc.): importarli qui accanto a quelli di
+// printNDA sotto lo stesso nome di classe li farebbe scontrare e
+// romperebbe la fedeltà di NDA SRC. Ho quindi scartato i valori di
+// printSchedaConsulente e alias/completato le classi mancanti di NDA
+// Generale sui valori analoghi già presenti in printNDA (stesso spacing
+// .firma-row per .firme, stessa struttura riga firma per .firma-blocco/
+// .firma-vuota) — primo tentativo ragionevole, NON validato da un test di
+// fedeltà (NDA Generale non ha una versione precedente con cui confrontarlo).
+const LEGAL_SHARED_CSS=`
+body{font-family:Arial,sans-serif;font-size:10.5pt;color:#1a1a1a;margin:0;padding:0}
+.page,.doc{max-width:700px;margin:0 auto;padding:40px 48px}
+h1{font-size:16pt;text-align:center;margin-bottom:4px}
+.sub,.closing{text-align:center;font-style:italic;color:#555;margin-bottom:32px}
+.parti-block{margin-bottom:18px}
+.parti-label{font-weight:700;font-size:11pt;margin-bottom:6px;margin-top:14px}
+table{border-collapse:collapse;margin-bottom:4px}
+h2{font-size:11pt;margin-top:22px;margin-bottom:6px}
+p,li{line-height:1.55;margin-bottom:6px}
+ol{margin:0 0 8px 0;padding-left:20px}
+.firma-row,.firme{display:flex;gap:60px;margin-top:40px;flex-wrap:wrap}
+.luogo-data{margin-top:32px;font-weight:700}
+.firma-blocco{margin-top:12px}
+.firma-vuota{border-bottom:1px solid #000;width:280px;margin-top:36px;padding-bottom:4px}
+@media print{@page{size:A4;margin:15mm 22mm}body{font-size:10pt}.page,.doc{padding:0;max-width:100%}}
+`;
+async function printLegalDoc(){
+  if(!curLegalTemplate){showMsg('Seleziona un tipo di accordo','warn');return;}
+  const selezioni={};
+  for(const actor of curLegalTemplate.attori||[]){
+    const el=document.getElementById('legal-attore-'+actor.slot);
+    if(!el||!el.value){showMsg('Seleziona '+(actor.label||actor.slot),'warn');return;}
+    selezioni[actor.slot]=el.value;
+  }
+  selezioni.__data=document.getElementById('legal-data').value;
+  const corpo=await renderLegalDoc(curLegalTemplate, selezioni);
+  if(corpo===null)return;
+  const html=`<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>${curLegalTemplate.nome}</title>
+<style>${LEGAL_SHARED_CSS}</style></head><body>${corpo}</body></html>`;
   openPrint(html);
 }
 

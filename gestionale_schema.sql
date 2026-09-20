@@ -712,6 +712,75 @@ $$;
 grant execute on function public.consulenti_nda_disponibili() to authenticated;
 
 -- ============================================================================
+-- 14. TEMPLATE DOCUMENTI LEGALI — legal_templates
+--    Sostituisce (a regime) il testo hardcoded di printNDA(): il corpo HTML
+--    vive qui, con segnaposto {{...}} sostituiti a runtime dal motore
+--    renderLegalDoc() nel frontend (fase 3). Lettura: chiunque autenticato
+--    può leggere i template ATTIVI — serve per popolare il select "Tipo di
+--    accordo" a chiunque generi documenti legali, non solo admin. Stesso
+--    criterio già usato per consent_config in GESPP: contenuto non
+--    sensibile, serve alla UI. Scrittura: solo admin, è l'admin a
+--    redigere/approvare i testi legali.
+--
+--    'attori' descrive chi compila il documento (jsonb array), es. NDA:
+--    [{"slot":"CONSULENTE1","tipo":"consulente","label":"Consulente 1","firma":true},
+--     {"slot":"CONSULENTE2","tipo":"consulente","label":"Consulente 2","firma":true},
+--     {"slot":"AZIENDA","tipo":"azienda","label":"Azienda","firma":false}]
+--    Tipi di attore supportati (insieme chiuso per ora): 'consulente'
+--    (fonte app_users+emitter_settings), 'azienda'/'cliente' (fonte clients
+--    lato frontend, cioè companies/persons+billing_profiles). Segnaposto per
+--    slot: {{<SLOT>_NOME}}, {{<SLOT>_QUALIFICA}}, {{<SLOT>_PIVA}},
+--    {{<SLOT>_CF}}, {{<SLOT>_STUDIO}}, {{<SLOT>_PEC}} per 'consulente';
+--    {{<SLOT>_DENOMINAZIONE}} (o {{<SLOT>_NOME}}), {{<SLOT>_PIVA_CF}},
+--    {{<SLOT>_INDIRIZZO}}, {{<SLOT>_RESP_LEGALE}}, {{<SLOT>_PEC}} per
+--    'azienda'/'cliente'; {{FIRMA_<SLOT>}} dove firma:true. Più
+--    {{LUOGO_DATA}} globale. PEC (consulente e azienda/cliente) e
+--    RESP_LEGALE (azienda/cliente) aggiunti il 2026-09-18: migrando il testo
+--    NDA SRC esistente sono emersi due valori già in uso (PEC dei
+--    consulenti, PEC e rappresentante legale dell'azienda) che l'insieme
+--    iniziale non copriva — estensione decisa esplicitamente, non dedotta.
+--    Nessuna sostituzione lato DB: la tabella contiene solo il corpo col
+--    segnaposto, la sostituzione è tutta frontend (stesso principio già in
+--    vigore: "qui si modella dove stanno i dati, non come si genera il
+--    documento").
+--
+--    Policy di lettura: attivo=true per chiunque autenticato, OPPURE
+--    is_admin() — l'admin vede anche i template disattivati (serve per un
+--    futuro editor/versionamento, dove deve poter rivedere/riattivare una
+--    bozza prima che sia visibile a tutti).
+--
+--    Nessuna funzione RPC di lettura: a differenza di consulenti_nda_
+--    disponibili() (che bypassa una RLS più restrittiva su app_users),
+--    qui la policy di select è già essa stessa il filtro "attivi" per
+--    chiunque autenticato — un select diretto basta, non serve un wrapper.
+-- ----------------------------------------------------------------------------
+create table if not exists public.legal_templates (
+    id            uuid primary key default gen_random_uuid(),
+    tipo          text not null,
+    nome          text not null,
+    versione      text not null,
+    corpo         text not null,
+    attori        jsonb not null default '[]',
+    attivo        boolean not null default true,
+    note          text,
+    aggiornato_da uuid references public.app_users(id),
+    aggiornato_il timestamptz not null default now()
+);
+create index if not exists idx_legal_templates_tipo on public.legal_templates(tipo);
+
+alter table public.legal_templates enable row level security;
+
+drop policy if exists legal_templates_read on public.legal_templates;
+create policy legal_templates_read on public.legal_templates
+    for select to authenticated using (attivo = true or public.is_admin());
+
+drop policy if exists legal_templates_admin_write on public.legal_templates;
+create policy legal_templates_admin_write on public.legal_templates
+    for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+grant select, insert, update, delete on public.legal_templates to authenticated;
+
+-- ============================================================================
 --  FINE STRATO FATTURAZIONE.
 --
 --  Verificato:
