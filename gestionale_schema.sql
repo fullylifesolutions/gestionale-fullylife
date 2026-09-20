@@ -767,6 +767,14 @@ create table if not exists public.legal_templates (
     aggiornato_il timestamptz not null default now()
 );
 create index if not exists idx_legal_templates_tipo on public.legal_templates(tipo);
+-- Aggiunto il 2026-09-20 dopo un incidente reale: un INSERT rilanciato per
+-- errore su produzione ha creato un duplicato attivo di 'nda_src' (stesso
+-- tipo, contenuto identico — 'tipo' non aveva nessun vincolo). Indice unico
+-- PARZIALE (solo attivo=true): impedisce due righe attive con lo stesso
+-- tipo, ma lascia spazio allo storico/versioning (più righe con lo stesso
+-- tipo e attivo=false possono coesistere, es. versioni precedenti).
+create unique index if not exists idx_legal_templates_tipo_attivo_unique
+on public.legal_templates(tipo) where attivo = true;
 
 alter table public.legal_templates enable row level security;
 
