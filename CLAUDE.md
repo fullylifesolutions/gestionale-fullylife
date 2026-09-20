@@ -68,6 +68,10 @@ Tabelle nuove di questo modulo:
 - `invoices` / `invoice_lines` — testata e righe di preventivo/fattura/
   proforma/nota di credito
 - `service_catalog` — catalogo servizi riutilizzabile
+- bucket Storage `firme` (privato) — firma emittente (`emitter/<emitter_id>.png`,
+  RLS `can_use_emitter()`) e firma consulente (`consulente/<user_id>.png`, RLS
+  solo `is_admin()`); vedi sezioni 12-13 di `gestionale_schema.sql` e punto 4
+  sotto
 
 Permesso: flag `puo_fatturare` su `app_users` (ortogonale ai ruoli esistenti
 `admin`/`consulente`/`consulente_limitato`), verificato via `can_bill()`.
@@ -109,3 +113,37 @@ qui — vedi la motivazione del punto 5 della lista dei domini sopra.
    tra gestionale/GESPP/slot-booking — il repo è ora pubblico e pubblicato su
    GitHub Pages (vedi avviso in cima al file), quindi questo prerequisito è
    soddisfatto; resta da fare solo il login condiviso vero e proprio.
+4. [FATTO] Firma sui documenti, in due sotto-fasi indipendenti (owner/scope
+   diversi, quindi bucket/path/policy diversi — non è stato fatto a metà):
+   - Sotto-fase 1 — firma **emittente** sui documenti fiscali (preventivi/
+     fatture/proforma): `handleFirma`/`removeFirma` in Impostazioni emittente,
+     `prtDoc` scarica la firma in sessione e la incorpora inline in base64
+     prima di aprire la finestra di stampa (mai un URL pubblico, a differenza
+     del logo). Bucket `firme` privato, path `emitter/<emitter_id>.png`.
+   - Sotto-fase 2 — firma **consulente** sugli accordi legali (oggi generati
+     dal motore di template, punto 5 — non più da `printNDA`, rimosso): path
+     `consulente/<user_id>.png`, accesso ristretto a solo admin (Bruno) — non
+     autogestione, l'admin carica la firma di ciascun consulente da una card
+     dedicata in Impostazioni. La UI legge i consulenti da `app_users`
+     (ruolo consulente/admin, attivi) via la RPC `consulenti_nda_disponibili()`
+     (bypassa la RLS restrittiva di `app_users`, ereditata da GESPP). Il campo
+     "Titolare" (`emitter_settings.owner_id`, solo admin) collega opzionalmente
+     un consulente al proprio emittente per arricchire CF/P.IVA/PEC/residenza
+     nel documento quando disponibili.
+   - Verificato in produzione: isolamento per-prefisso tra le policy
+     `firme_emitter_*` e `firme_consulente_*` (nessuno sconfinamento
+     reciproco), upload/rimozione/anteprima, generazione documenti con e
+     senza firma caricata.
+5. [FATTO] Motore di template per documenti legali (`legal_templates`,
+   sostituisce il vecchio `printNDA` hardcoded, rimosso): tabella con
+   `corpo` (HTML, segnaposto `{{...}}`) e `attori` (jsonb — chi compila il
+   documento: consulente/azienda/cliente, con `firma`/`firma_layout`/
+   `obbligatori` opzionali per attore). La UI deriva i select di selezione
+   dagli `attori` del template scelto, nessuna struttura cablata nel
+   codice. `renderLegalDoc()` sostituisce i segnaposto, valida i campi
+   `obbligatori` per attore prima di generare (blocca con avviso invece di
+   produrre un documento con buchi), inserisce le firme in base64. Indice
+   unico parziale `(tipo) WHERE attivo` dopo un incidente reale di
+   duplicazione in produzione (un INSERT rilanciato per errore). Due
+   template attivi: NDA SRC (migrazione 1:1 del vecchio `printNDA`,
+   verificata con test di fedeltà byte-per-byte) e NDA Generale.
