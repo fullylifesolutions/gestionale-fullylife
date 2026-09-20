@@ -786,37 +786,11 @@ textarea{resize:vertical;min-height:58px}
 <!-- DOCUMENTI LEGALI -->
 <div id="sec-legali" class="section">
   <div class="topbar"><h2>Documenti legali</h2></div>
+  <!-- Motore template legali: validato (fedeltà NDA SRC verificata, difetti
+       del Generale corretti) e in produzione — sostituisce la vecchia card
+       NDA a testo hardcoded (rimossa) e printNDA() (rimossa). -->
   <div class="card">
-    <div class="card-head"><div class="hl"><div class="ci">🔏</div><div><h3>Accordo di Riservatezza (NDA)</h3><p>Compila e genera il PDF dell'accordo di riservatezza SRC</p></div></div></div>
-    <div class="card-body">
-      <div class="grid2" style="margin-bottom:14px">
-        <div class="field">
-          <label>Consulente 1</label>
-          <select id="nda-c1" onchange="fillNdaConsulente(1)"><option value="">— Seleziona consulente —</option></select>
-        </div>
-        <div class="field">
-          <label>Consulente 2</label>
-          <select id="nda-c2" onchange="fillNdaConsulente(2)"><option value="">— Seleziona consulente —</option></select>
-        </div>
-        <div class="field">
-          <label>Azienda cliente</label>
-          <select id="nda-cli" onchange="fillNdaCliente()"><option value="">— Seleziona cliente —</option></select>
-        </div>
-        <div class="field">
-          <label>Data stipula</label>
-          <input type="date" id="nda-data">
-        </div>
-      </div>
-      <button class="btn btn-primary" onclick="printNDA()">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6,9 6,2 18,2 18,9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-        Genera PDF
-      </button>
-    </div>
-  </div>
-  <!-- MOTORE TEMPLATE LEGALI (Fase 3, nuovo): affianca la card NDA sopra
-       finché non è validato dal test di fedeltà — non la sostituisce ancora -->
-  <div class="card" style="margin-top:16px">
-    <div class="card-head"><div class="hl"><div class="ci">📄</div><div><h3>Documento legale (nuovo motore, in verifica)</h3><p>Genera un documento legale da template — la lista attori si adatta al template scelto</p></div></div></div>
+    <div class="card-head"><div class="hl"><div class="ci">📄</div><div><h3>Documento legale</h3><p>Genera un documento legale da template — la lista attori si adatta al template scelto</p></div></div></div>
     <div class="card-body">
       <div class="field" style="margin-bottom:14px">
         <label>Tipo di accordo</label>
@@ -1453,7 +1427,8 @@ async function renderTitolareSelect(){
 // ══ FIRME CONSULENTI (solo admin, path consulente/<user_id>.png — vedi
 //    policy firme_consulente_* in gestionale_schema.sql sezione 13). Non è
 //    autogestione: l'admin carica/sostituisce/rimuove la firma di ciascun
-//    consulente attivo, usata da printNDA. ══
+//    consulente attivo, usata dal motore template (renderLegalDoc/
+//    fetchFirmaConsulenteB64) per i documenti legali. ══
 async function renderFirmeConsulenti(){
   const card=document.getElementById('firme-consulenti-card');
   if(!card)return;
@@ -3437,23 +3412,15 @@ function getCatColor(nomeCat){
 
 // ══ DOCUMENTI LEGALI — NDA ══
 let ndaConsulenti=[];
+// Nome storico (in origine popolava anche la vecchia card NDA, rimossa):
+// oggi carica solo l'elenco consulenti usato dal motore template (Fase 3,
+// letto da onLegalTemplateChange/buildAttoreData) e la checklist di "Scheda
+// Consulente" (funzionalità separata, su profiles/emittenti — non toccata
+// dal motore template). Chiamata da goTo() prima di initLegalEngine().
 async function initNDA(){
-  const c1=document.getElementById('nda-c1');
-  const c2=document.getElementById('nda-c2');
-  if(c1&&c2){
-    const{data,error}=await supabaseClient.rpc('consulenti_nda_disponibili');
-    if(error){alert('Errore nel caricamento dei consulenti: '+error.message);}
-    ndaConsulenti=data||[];
-    const opts='<option value="">— Seleziona consulente —</option>'+
-      ndaConsulenti.map(u=>`<option value="${u.id}">${[u.nome,u.cognome].filter(Boolean).join(' ')}</option>`).join('');
-    c1.innerHTML=opts;c2.innerHTML=opts;
-  }
-  const cc=document.getElementById('nda-cli');
-  if(cc) cc.innerHTML='<option value="">— Seleziona cliente —</option>'+
-    clients.map((c,i)=>`<option value="${i}">${c.nome}</option>`).join('');
-  document.getElementById('nda-data').value=new Date().toISOString().slice(0,10);
-  // Popola checklist scheda consulente (resta su profiles/emittenti — la
-  // Scheda Consulente non è toccata da questa sotto-fase)
+  const{data,error}=await supabaseClient.rpc('consulenti_nda_disponibili');
+  if(error){alert('Errore nel caricamento dei consulenti: '+error.message);}
+  ndaConsulenti=data||[];
   const cl=document.getElementById('scheda-checklist');
   if(cl) cl.innerHTML=profiles.map(p=>`
     <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:7px 10px;border-radius:var(--r8);border:1px solid var(--border);background:var(--bg)">
@@ -3532,149 +3499,22 @@ async function getNdaConsulenteData(u){
     piva:e?.partita_iva||'',
     ind:e?(e.indirizzo?e.indirizzo+', ':'')+[e.cap,e.comune,e.provincia].filter(Boolean).join(' '):'',
     pec:e?.pec||'',
-    // Aggiunto per il motore template (Fase 3, {{<SLOT>_QUALIFICA}}): campo
-    // additivo, non usato da printNDA (che legge solo nome/cf/piva/ind/pec)
-    // — nessun impatto sul vecchio NDA.
+    // Usato dal motore template (Fase 3) per {{<SLOT>_QUALIFICA}}.
     qualifica:e?.role_label||''
   };
 }
 
-function fillNdaConsulente(n){/* preview only — dati usati al momento della stampa */}
-function fillNdaCliente(){/* preview only — dati usati al momento della stampa */}
+/* printNDA() (generatore hardcoded del solo NDA SRC), fillNdaConsulente()
+   e fillNdaCliente() (stub della vecchia card) rimossi: il motore template
+   sotto genera sia NDA SRC che NDA Generale, validato con test di fedeltà
+   e in uso in produzione. */
 
-async function printNDA(){
-  const pid1=document.getElementById('nda-c1').value;
-  const pid2=document.getElementById('nda-c2').value;
-  const cliIdx=document.getElementById('nda-cli').value;
-  const dataVal=document.getElementById('nda-data').value;
-
-  if(!pid1||!pid2){showMsg('Seleziona entrambi i consulenti','warn');return;}
-  if(cliIdx===''){showMsg('Seleziona il cliente','warn');return;}
-
-  const u1=ndaConsulenti.find(u=>u.id===pid1)||{id:pid1,nome:'',cognome:''};
-  const u2=ndaConsulenti.find(u=>u.id===pid2)||{id:pid2,nome:'',cognome:''};
-  const c1=await getNdaConsulenteData(u1);
-  const c2=await getNdaConsulenteData(u2);
-  const cli=clients[parseInt(cliIdx)]||{};
-  const luogo=cli.comune||'_______________';
-  const dataIT=fmtDateIT(dataVal)||'_______________';
-
-  const row=(label,val)=>`<tr><td style="font-weight:700;padding:2px 8px 2px 0;width:200px">${label}</td><td style="padding:2px 0;border-bottom:1px solid #ccc;min-width:300px">${val||'&nbsp;'}</td></tr>`;
-  const firma=(label, firmaB64)=>{
-    const img=firmaB64
-      ?`<img src="data:image/png;base64,${firmaB64}" style="position:absolute;bottom:0;left:0;width:280px;max-height:70px;object-fit:contain;object-position:left bottom">`
-      :'';
-    return`<div style="margin-top:36px">
-      <p style="font-weight:700;margin-bottom:4px">${label}</p>
-      <div style="position:relative;width:280px;height:70px">${img}</div>
-      <div style="border-bottom:1px solid #000;width:280px;margin-bottom:4px"></div>
-      <p style="font-size:9pt;color:#666">(firma)</p>
-    </div>`;
-  };
-
-  const firma1=await fetchFirmaConsulenteB64(pid1);
-  const firma2=await fetchFirmaConsulenteB64(pid2);
-
-  const html=`<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Accordo di Riservatezza NDA</title>
-<style>
-  body{font-family:Arial,sans-serif;font-size:10.5pt;color:#1a1a1a;margin:0;padding:0}
-  .page{max-width:700px;margin:0 auto;padding:40px 48px}
-  h1{font-size:16pt;text-align:center;margin-bottom:4px}
-  .sub{text-align:center;font-style:italic;color:#555;margin-bottom:32px}
-  .parti-block{margin-bottom:18px}
-  .parti-label{font-weight:700;font-size:11pt;margin-bottom:6px;margin-top:14px}
-  table{border-collapse:collapse;margin-bottom:4px}
-  h2{font-size:11pt;margin-top:22px;margin-bottom:6px}
-  p,li{line-height:1.55;margin-bottom:6px}
-  ol{margin:0 0 8px 0;padding-left:20px}
-  .firma-row{display:flex;gap:60px;margin-top:40px;flex-wrap:wrap}
-  .luogo-data{margin-top:32px;font-weight:700}
-  @media print{@page{size:A4;margin:15mm 22mm}body{font-size:10pt}.page{padding:0;max-width:100%}}
-</style></head><body><div class="page">
-
-<h1>ACCORDO DI RISERVATEZZA</h1>
-<p class="sub">Non-Disclosure Agreement — NDA</p>
-
-<p style="text-align:center;font-weight:700;font-size:12pt;margin:20px 0 20px"><strong>Tra</strong></p>
-
-<div class="parti-block">
-<p class="parti-label">Consulente 1</p>
-<table>${row('Nome e cognome',c1.nome)}${row('Codice fiscale',c1.cf)}${row('Residenza anagrafica',c1.ind)}${row('Partita IVA',c1.piva)}${row('PEC',c1.pec)}</table>
-</div>
-
-<div class="parti-block">
-<p class="parti-label">Consulente 2</p>
-<table>${row('Nome e cognome',c2.nome)}${row('Codice fiscale',c2.cf)}${row('Residenza anagrafica',c2.ind)}${row('Partita IVA',c2.piva)}${row('PEC',c2.pec)}</table>
-</div>
-
-<p style="text-align:center;font-weight:700;font-size:12pt;margin:20px 0 20px"><strong>e</strong></p>
-
-<div class="parti-block">
-<p class="parti-label">L'Azienda</p>
-<table>${row('Ragione sociale',cli.nome)}${row('Sede legale',[cli.ind,cli.cap,cli.comune,cli.prov].filter(Boolean).join(', '))}${row('Partita IVA / Codice fiscale',cli.piva)}${row('Rappresentante legale',cli.respLegale)}${row('PEC',cli.pecSdi)}</table>
-</div>
-
-<p><em>di seguito congiuntamente denominati le «Parti», si conviene e si stipula quanto segue:</em></p>
-
-<h2>1. Oggetto</h2>
-<p>Il presente accordo disciplina il trattamento delle informazioni riservate che l'Azienda comunica ai Consulenti nell'ambito dell'analisi di financial materiality per il programma SRC (Safety &amp; Relational Capability). Le informazioni oggetto del presente accordo includono, a titolo esemplificativo e non esaustivo: dati economici e finanziari, dati relativi alla forza lavoro, indicatori di salute e sicurezza, dati su assenteismo, turnover e infortuni, informazioni commerciali e di filiera, nonché qualsiasi altro dato o documento fornito attraverso il modulo di raccolta dati SRC o in qualunque altra forma nel corso della collaborazione.</p>
-
-<h2 style="page-break-before:always">2. Obblighi dei Consulenti</h2>
-<p>I Consulenti si impegnano a:</p>
-<ol type="a">
-<li>mantenere riservate tutte le informazioni ricevute dall'Azienda e a non divulgarle a terzi senza il preventivo consenso scritto dell'Azienda;</li>
-<li>utilizzare le informazioni ricevute esclusivamente per le finalità connesse all'analisi di financial materiality ESRS S1 e alla elaborazione del piano di investimento SRC, e per nessun altro scopo;</li>
-<li>non riprodurre, copiare o conservare le informazioni ricevute oltre il tempo strettamente necessario all'esecuzione dell'incarico, salvo diverso accordo scritto;</li>
-<li>adottare misure di protezione adeguate a preservare la riservatezza delle informazioni, equivalenti almeno a quelle adottate per la protezione delle proprie informazioni riservate;</li>
-<li>informare tempestivamente l'Azienda qualora vengano a conoscenza di qualsiasi accesso non autorizzato o divulgazione involontaria delle informazioni ricevute.</li>
-</ol>
-
-<h2>3. Eccezioni</h2>
-<p>Gli obblighi di riservatezza di cui all'articolo 2 non si applicano alle informazioni che:</p>
-<ul>
-<li>siano o divengano di pubblico dominio per ragioni indipendenti dalla volontà dei Consulenti;</li>
-<li>siano già in possesso dei Consulenti prima della loro comunicazione da parte dell'Azienda, senza vincolo di riservatezza;</li>
-<li>debbano essere divulgate per obbligo di legge o per ordine dell'autorità giudiziaria o amministrativa competente, nel qual caso i Consulenti daranno tempestiva comunicazione all'Azienda prima della divulgazione, nei limiti consentiti dalla legge.</li>
-</ul>
-
-<h2>4. Durata</h2>
-<p>Il presente accordo ha efficacia dalla data di sottoscrizione e gli obblighi di riservatezza permangono per un periodo di cinque anni dalla conclusione dell'incarico, salvo diverso accordo scritto tra le parti.</p>
-
-<h2>5. Restituzione e distruzione dei dati</h2>
-<p>Al termine dell'incarico, o su richiesta dell'Azienda, i Consulenti si impegnano a restituire o distruggere, secondo le istruzioni ricevute, tutta la documentazione e i dati forniti dall'Azienda, dandone conferma scritta.</p>
-
-<h2>6. Proprietà delle informazioni</h2>
-<p>Le informazioni comunicate dall'Azienda rimangono in ogni caso di esclusiva proprietà dell'Azienda. Il presente accordo non trasferisce ai Consulenti alcun diritto su di esse, né costituisce licenza di alcun tipo.</p>
-
-<h2>7. Responsabilità</h2>
-<p>I Consulenti si impegnano a rispettare gli obblighi di riservatezza previsti dal presente accordo. In caso di violazione, si applicano le disposizioni di legge vigenti in materia di inadempimento contrattuale.</p>
-
-<h2 style="page-break-before:always">8. Legge applicabile e foro competente</h2>
-<p>Il presente accordo è regolato dalla legge italiana. Per qualsiasi controversia derivante dall'interpretazione o dall'esecuzione del presente accordo, le parti eleggono come foro esclusivamente competente il Tribunale di Milano.</p>
-
-<h2>9. Disposizioni finali</h2>
-<p>Il presente accordo costituisce l'intero accordo tra le parti in materia di riservatezza e sostituisce qualsiasi precedente intesa, verbale o scritta, avente il medesimo oggetto. Eventuali modifiche dovranno essere concordate per iscritto e sottoscritte da entrambe le parti.</p>
-
-<p class="luogo-data">Luogo e data: ${luogo}, ${dataIT}</p>
-
-<div class="firma-row">
-  ${firma('Consulente 1 — '+c1.nome, firma1)}
-  ${firma('Consulente 2 — '+c2.nome, firma2)}
-</div>
-<div class="firma-row">
-  ${firma('Per l\'Azienda — '+cli.nome+'<br><small style="font-weight:400">presa visione e accettazione (firma e timbro)</small>', null)}
-</div>
-
-</div><\/body><\/html>`;
-
-  openPrint(html);
-}
-
-// ══ MOTORE TEMPLATE LEGALI (Fase 3) — legge da legal_templates, sostituisce
-//    i segnaposto {{...}} con i dati degli attori selezionati, genera via
-//    openPrint(). Affianca printNDA() finché non è validato dal test di
-//    fedeltà (NDA SRC vecchio vs nuovo devono coincidere) — non lo tocca,
-//    non lo sostituisce. ══
+// ══ MOTORE TEMPLATE LEGALI — legge da legal_templates, sostituisce i
+//    segnaposto {{...}} con i dati degli attori selezionati, genera via
+//    openPrint(). Sostituisce il vecchio printNDA() (generatore hardcoded
+//    del solo NDA SRC, rimosso): validato con test di fedeltà su NDA SRC
+//    e in uso in produzione per entrambi i template (NDA SRC, NDA
+//    Generale). ══
 let legalTemplates=[];
 let curLegalTemplate=null;
 async function initLegalEngine(){
