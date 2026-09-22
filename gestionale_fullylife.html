@@ -1130,10 +1130,12 @@ async function checkSession(){
 }
 supabaseClient.auth.onAuthStateChange((event)=>{
   if(event==='SIGNED_OUT'){
-    curId=null;curEmitter=null;profiles=[];isAdmin=false;
-    document.getElementById('nav-utenti').style.display='none';
-    document.getElementById('logo-card').style.display='none';
-    showScreen('login-screen');
+    // Reindirizza subito all'hub invece di mostrare il login locale (che
+    // altrimenti comparirebbe per un istante prima del redirect esplicito
+    // in doLogout() — stesso motivo per cui doLogout() non chiama più
+    // showScreen('login-screen')). Gestisce anche il logout innescato da
+    // un'altra scheda/app sulla stessa origine (sessione condivisa).
+    window.location.href='../index.html';
   }
   if(event==='PASSWORD_RECOVERY'){
     showScreen('recovery-screen');
