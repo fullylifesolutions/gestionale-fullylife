@@ -147,3 +147,27 @@ qui — vedi la motivazione del punto 5 della lista dei domini sopra.
    duplicazione in produzione (un INSERT rilanciato per errore). Due
    template attivi: NDA SRC (migrazione 1:1 del vecchio `printNDA`,
    verificata con test di fedeltà byte-per-byte) e NDA Generale.
+
+## Note di architettura / attenzioni
+
+**Motore template documenti legali.** I documenti legali (NDA SRC, NDA
+Generale, futuri) vivono nella tabella `legal_templates` (corpo HTML con
+segnaposto `{{...}}` + `attori` in JSON), non hardcoded nel frontend. Il
+vecchio `printNDA()` è stato rimosso: il motore unico è
+`renderLegalDoc()`/`printLegalDoc()`. Ogni attore dichiara i propri campi
+obbligatori **per template** — lo stesso campo (es. `RESP_LEGALE`) può
+essere obbligatorio nel template Generale e facoltativo nell'SRC: la
+validazione blocca la generazione se un campo obbligatorio dichiarato è
+vuoto. Le firme dei consulenti sono immagini lette dal bucket `firme`; il
+markup della firma cambia in base al layout del template
+(`firma_layout:"relativo"` per i template a prosa come il Generale,
+assoluto per l'SRC che è a tabella). RLS di `legal_templates`: lettura per
+`attivo=true or is_admin()`, scrittura solo admin. Versionamento: un
+template firmato **non va sovrascritto** — si crea una nuova versione e si
+disattiva la vecchia, mai un update in place.
+
+**STUDIO vs INDIRIZZO si compongono diversamente.** Non è un'incoerenza da
+sistemare: `STUDIO` del consulente è composto da indirizzo+CAP+comune+
+provincia, mentre `INDIRIZZO` dell'azienda è una semplice concatenazione/
+join. Replica un comportamento storico voluto — non uniformare i due
+campi.
