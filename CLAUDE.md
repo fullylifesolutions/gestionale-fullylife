@@ -75,9 +75,7 @@ Tabelle nuove di questo modulo:
 - `quote_tranches` — piano di fatturazione a tranche (acconto/tranche/saldo...)
   su un preventivo esistente: percentuali variabili, `importo_imponibile` come
   fonte di verità, stato tracciato (`da_fatturare`/`proforma`/`fatturata`).
-  Isolata, non tocca `invoices`/`invoice_lines`. **Non ancora applicata al
-  progetto Supabase di produzione** — solo in TEST e nel commit locale del
-  repo (vedi punto 6 sotto)
+  Isolata, non tocca `invoices`/`invoice_lines`. Live (vedi punto 6 sotto).
 
 Permesso: flag `puo_fatturare` su `app_users` (ortogonale ai ruoli esistenti
 `admin`/`consulente`/`consulente_limitato`), verificato via `can_bill()`.
@@ -153,7 +151,7 @@ qui — vedi la motivazione del punto 5 della lista dei domini sopra.
    duplicazione in produzione (un INSERT rilanciato per errore). Due
    template attivi: NDA SRC (migrazione 1:1 del vecchio `printNDA`,
    verificata con test di fedeltà byte-per-byte) e NDA Generale.
-6. [FATTO in TEST, non ancora in produzione] Fatturazione a tranche da
+6. [FATTO] Fatturazione a tranche da
    preventivo (`quote_tranches`): piano di N tranche con percentuali
    variabili, quadratura automatica (le prime N-1 = `round2(imponibile *
    percentuale/100)`, l'ultima assorbe il residuo — la somma torna sempre
@@ -169,9 +167,11 @@ qui — vedi la motivazione del punto 5 della lista dei domini sopra.
    della lista documenti (`convDoc`) non sa nulla del piano tranche e
    genererebbe un documento scollegato — risolto con un redirect al piano
    tranche per le proforma che ne fanno parte (`quote_tranches.proforma_id`),
-   lasciando invariato il comportamento sulle proforma normali. Commit locale
-   fatto (`51b8f3d`), non pushato: lo schema `quote_tranches` non è ancora
-   applicato al Supabase di produzione.
+   lasciando invariato il comportamento sulle proforma normali. Schema
+   applicato sia in TEST che in produzione, verificato in produzione
+   (tabella/trigger/policy presenti); UI collaudata in TEST e in produzione
+   (senza emettere fatture vere) — il primo utilizzo reale su un preventivo
+   diviso in tranche farà da collaudo finale sul flusso di emissione.
 
 ## Note di architettura / attenzioni
 
