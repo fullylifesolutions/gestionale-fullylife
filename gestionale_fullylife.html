@@ -1107,10 +1107,7 @@ async function doLogin(){
 }
 async function doLogout(){
   await supabaseClient.auth.signOut();
-  curId=null;curEmitter=null;profiles=[];isAdmin=false;
-  document.getElementById('nav-utenti').style.display='none';
-  document.getElementById('logo-card').style.display='none';
-  showScreen('login-screen');
+  window.location.href='../index.html';
 }
 async function afterLogin(){
   isAdmin=await checkIsAdmin();
