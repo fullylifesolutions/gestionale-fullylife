@@ -788,6 +788,122 @@ create policy legal_templates_admin_write on public.legal_templates
 
 grant select, insert, update, delete on public.legal_templates to authenticated;
 
+-- ----------------------------------------------------------------------------
+-- 15. QUOTE_TRANCHES — fatturazione a tranche da preventivo
+--     Piano di tranche (acconto/tranche/saldo...) su un preventivo esistente.
+--     Tabella isolata: non tocca invoices/invoice_lines. Il legame verso i
+--     documenti generati (proforma_id/fattura_id) è relazionale fin da subito
+--     — a differenza di invoices.convertito_da (mai valorizzato dal frontend,
+--     resta morto, sezione 4), qui il frontend scrive davvero questi due campi
+--     quando genera un documento dalla tranche (vedi Fase 2 del piano).
+--
+--     Base di calcolo: invoices.imponibile (colonna già separata dal totale,
+--     sezione 4) — mai il totale. importo_imponibile su ciascuna riga è la
+--     fonte di verità una volta salvata: al momento della fatturazione si
+--     legge questo valore dal DB, non si ricalcola dalla percentuale.
+--     Quadratura al centesimo lasciata al frontend (Fase 2): le prime N-1
+--     tranche sono round2(imponibile * percentuale/100), l'ultima è il
+--     residuo (imponibile - somma delle precedenti) — la somma degli
+--     importo_imponibile torna sempre esatta anche con arrotondamenti.
+--
+--     NB non implementato qui (segnalato, non deciso): nessun vincolo impedisce
+--     che preventivo_id punti a una riga invoices con tipo diverso da
+--     'preventivo' — un CHECK non può leggere un'altra tabella; servirebbe un
+--     trigger dedicato, non richiesto da questa fase. Il frontend (Fase 2)
+--     comunque offrirà il piano tranche solo dalla schermata preventivo.
+-- ----------------------------------------------------------------------------
+create table public.quote_tranches (
+    id                  uuid primary key default gen_random_uuid(),
+    preventivo_id       uuid not null references public.invoices(id) on delete cascade,
+    ordine              integer not null check (ordine > 0),
+    descrizione         text not null,
+    percentuale         numeric(5,2) not null check (percentuale > 0 and percentuale <= 100),
+    -- fonte di verità dell'importo: valorizzata dal frontend al salvataggio del
+    -- piano (round2(imponibile*percentuale/100) per le prime N-1, residuo per
+    -- l'ultima), mai ricalcolata da qui in poi. Nessun default: un insert che
+    -- se lo dimentica deve fallire rumorosamente, non silenziosamente a 0.
+    importo_imponibile  numeric(12,2) not null,
+    stato               text not null default 'da_fatturare'
+                        check (stato in ('da_fatturare','proforma','fatturata')),
+    -- documento generato da questa tranche. Nessun on delete: cancellare una
+    -- proforma/fattura già legata a una tranche resta bloccato dalla FK per
+    -- default (stesso comportamento restrittivo di invoices.convertito_da),
+    -- non silenziato con un set null.
+    proforma_id         uuid references public.invoices(id),
+    fattura_id          uuid references public.invoices(id),
+    created_at          timestamptz not null default now(),
+    unique (preventivo_id, ordine)
+);
+
+create index idx_tranches_preventivo on public.quote_tranches(preventivo_id);
+create index idx_tranches_proforma   on public.quote_tranches(proforma_id);
+create index idx_tranches_fattura    on public.quote_tranches(fattura_id);
+
+alter table public.quote_tranches enable row level security;
+
+-- Stesso criterio di invoice_lines (sezione 7): accesso via l'emittente del
+-- PREVENTIVO padre, non un criterio proprio.
+create policy tranches_all on public.quote_tranches
+    for all using ( exists (
+        select 1 from public.invoices i
+        where i.id = quote_tranches.preventivo_id and public.can_use_emitter(i.emitter_id)
+    )) with check ( exists (
+        select 1 from public.invoices i
+        where i.id = quote_tranches.preventivo_id and public.can_use_emitter(i.emitter_id)
+    ));
+
+grant select, insert, update, delete on public.quote_tranches to authenticated;
+
+-- Validazione somma percentuali = 100 per piano (preventivo_id). Difesa in
+-- profondità: il frontend (Fase 2) blocca già il salvataggio se la somma non
+-- torna; questo trigger è la rete di sicurezza lato DB — copre un eventuale
+-- bug frontend, una scrittura diretta da SQL Editor, o una futura
+-- integrazione che scriva su questa tabella senza passare dalla UI.
+--
+-- Trigger di VINCOLO (deferrable, initially deferred): una riga vista in
+-- isolamento non somma mai 100 finché non sono state inserite tutte le righe
+-- del piano nella stessa transazione. Un trigger FOR EACH ROW normale (non
+-- deferred) fallirebbe già sul primo insert del batch. DEFERRABLE INITIALLY
+-- DEFERRED sposta il controllo al COMMIT: il frontend inserisce tutte le
+-- righe del piano in un'unica transazione (Fase 2), e solo alla fine si
+-- verifica che la somma sia esattamente 100.
+create or replace function public.check_tranche_percentuali()
+returns trigger
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+    v_preventivo_id uuid := coalesce(new.preventivo_id, old.preventivo_id);
+    v_somma         numeric(6,2);
+    v_count         integer;
+begin
+    select count(*), coalesce(sum(percentuale), 0)
+      into v_count, v_somma
+      from public.quote_tranches
+     where preventivo_id = v_preventivo_id;
+
+    -- ultima riga del piano cancellata: nessun piano residuo da validare.
+    if v_count = 0 then
+        return null;
+    end if;
+
+    if v_somma <> 100 then
+        raise exception
+            'Piano tranche del preventivo %: la somma delle percentuali è %, deve essere 100',
+            v_preventivo_id, v_somma
+            using errcode = '23514'; -- check_violation
+    end if;
+
+    return null;
+end;
+$$;
+
+create constraint trigger trg_tranche_percentuali
+    after insert or update or delete on public.quote_tranches
+    deferrable initially deferred
+    for each row execute function public.check_tranche_percentuali();
+
 -- ============================================================================
 --  FINE STRATO FATTURAZIONE.
 --

@@ -1044,6 +1044,29 @@ textarea{resize:vertical;min-height:58px}
   </div>
 </div>
 
+<!-- Modal piano tranche (fatturazione a tranche da preventivo) -->
+<div class="overlay" id="ov-tranche">
+  <div class="modal" style="width:min(680px,94vw);max-height:88vh;overflow:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <h3 id="tranche-title">Piano tranche</h3>
+      <button class="btn btn-sm" onclick="closeOv('tranche')">✕</button>
+    </div>
+    <p style="font-size:.79rem;color:var(--ink-2);margin-bottom:12px" id="tranche-sub"></p>
+    <div id="tranche-locked-msg" style="display:none;background:var(--amber-l);border:1px solid #F0C070;border-radius:var(--r8);padding:9px 12px;font-size:.79rem;color:var(--amber);margin-bottom:12px">
+      🔒 Piano bloccato: almeno una tranche è già fatturata. Per fatturare altro su questo cliente, crea un nuovo preventivo.
+    </div>
+    <div id="tranche-rows-c"></div>
+    <button class="btn btn-sm" id="tranche-add-btn" onclick="addTrancheRow()" style="margin:4px 0 14px">+ Aggiungi tranche</button>
+    <div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px;border-top:1px solid var(--border)">
+      <span style="font-size:.85rem;font-weight:600" id="tranche-sum-label">Totale percentuali: 0%</span>
+      <div style="display:flex;gap:9px">
+        <button class="btn" onclick="closeOv('tranche')">Chiudi</button>
+        <button class="btn btn-primary" id="tranche-save-btn" onclick="saveTranchePlan()">Salva piano</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 // ══ COLORS ══
 const COLORS=[
@@ -1065,6 +1088,16 @@ let curId=null;
 let curEmitter=null;
 let docs=[],products=[],sharedProducts=[],categories=[],clients=[],settings={};
 let rows=[],editId=null,editNumero=null,editClientRef=null,editPrevRef=null,pendingPrevRef=null,docFilter='all';
+// ══ PIANO TRANCHE ══
+// currentTranchePreventivo: riga invoices (tipo='preventivo') aperta nel modal, letta fresca da DB
+// (serve invoices.imponibile, che fromDbInvoice() non riporta in docs[] — vedi nota lì).
+// trancheRows: righe quote_tranches in memoria, sync con DB solo dopo load/save espliciti.
+let currentTranchePreventivo=null,trancheRows=[];
+// proforma_id -> preventivo_id, per le proforma che appartengono a un piano tranche.
+// Serve a impedire che il bottone "→ Fattura" generico della lista documenti
+// (convDoc, non tocca quote_tranches) generi una fattura duplicata scollegata
+// dal piano — vedi trancheBtn/convBtn in diHTML().
+let trancheProformaMap={};
 let npLogoB64=null,npLogoMime=null,npColor=0;
 let trvTimer=null;
 
@@ -1191,7 +1224,18 @@ async function loadDocs(){
     .eq('emitter_id',curId).order('created_at',{ascending:false});
   if(error){alert('Errore nel caricamento dei documenti: '+error.message);return;}
   docs=(data||[]).map(fromDbInvoice);
+  await loadTrancheProformaLinks();
   renderDash();renderDocList();
+}
+// Popola trancheProformaMap. Interroga TUTTE le righe con proforma_id valorizzato,
+// non solo stato='proforma': anche a promozione avvenuta (stato='fatturata') il
+// vecchio documento proforma esiste ancora nella lista e va comunque protetto,
+// altrimenti si potrebbe fatturarlo una seconda volta da lì.
+async function loadTrancheProformaLinks(){
+  const{data,error}=await supabaseClient.from('quote_tranches').select('proforma_id,preventivo_id').not('proforma_id','is',null);
+  if(error){trancheProformaMap={};return;} // difesa: un errore qui non deve bloccare il caricamento documenti
+  trancheProformaMap={};
+  (data||[]).forEach(r=>{trancheProformaMap[r.proforma_id]=r.preventivo_id;});
 }
 // Assegna il numero definitivo SOLO alla prima transizione fuori da bozza, mai più
 // di una volta sullo stesso documento — vedi contratto d'uso di prossimo_numero()
@@ -1590,10 +1634,20 @@ function diHTML(d){
   }
 
   const xmlBtn=d.tipo==='fattura'?`<button class="btn btn-sm" style="color:var(--amber);border-color:#F0C070" onclick="genXML('${d.id}',event)" title="XML FatturaPA">XML</button>`:'';
+  // Proforma nata da un piano tranche (quote_tranches.proforma_id): il bottone
+  // generico sotto genererebbe una fattura scollegata dal piano, potenzialmente
+  // duplicata se quella tranche viene poi fatturata anche da lì. Redirect,
+  // convDoc resta intatto e continua a funzionare per le proforma non-tranche.
+  const trancheParentId=d.tipo==='proforma'?trancheProformaMap[d.id]:null;
   const convBtn=d.tipo==='preventivo'
     ?`<button class="btn btn-sm btn-accent" onclick="convDoc('${d.id}','proforma',event)">→ Proforma</button>`
-    :d.tipo==='proforma'
+    :(d.tipo==='proforma'&&!trancheParentId)
     ?`<button class="btn btn-sm btn-green" onclick="convDoc('${d.id}','fattura',event)">→ Fattura</button>`
+    :(d.tipo==='proforma'&&trancheParentId)
+    ?`<button class="btn btn-sm" style="color:var(--accent);border-color:#B8D0E8" onclick="openTranche('${trancheParentId}',event)" title="Proforma di un piano tranche: fattura da lì, non da qui">🔗 Fattura dal piano</button>`
+    :'';
+  const trancheBtn=d.tipo==='preventivo'
+    ?`<button class="btn btn-sm" style="color:var(--accent);border-color:#B8D0E8" onclick="openTranche('${d.id}',event)" title="Piano tranche">📋 Tranche</button>`
     :'';
   const sollecitoBtn=d.tipo==='proforma'&&d.status!=='pagato'
     ?`<button class="btn btn-sm" style="color:var(--amber)" onclick="openSollecito('${d.id}',event)">Sollecito</button>`:'';
@@ -1609,7 +1663,7 @@ function diHTML(d){
     <div class="di-act">
       ${d.status!=='pagato'&&d.tipo!=='nota_credito'?`<button class="btn btn-sm btn-green" onclick="markPaid('${d.id}',event)">✓ Pagato</button>`:''}
       <button class="btn btn-sm" onclick="prtDoc('${d.id}',event)">PDF</button>
-      ${xmlBtn}${convBtn}${sollecitoBtn}${ncBtn}
+      ${xmlBtn}${convBtn}${trancheBtn}${sollecitoBtn}${ncBtn}
       <button class="btn btn-sm" style="color:var(--ink-2)" onclick="archiviaDoc('${d.id}',event)" title="Archivia">📁</button>
       <button class="btn btn-sm btn-danger" onclick="delDoc('${d.id}',event)">✕</button>
     </div>
@@ -1704,18 +1758,18 @@ function calcTots(){
   const rt=parseFloat(document.getElementById('iva-r').value)||0,iv=n*rt/100;
   document.getElementById('tn').textContent=fe(n);document.getElementById('ti').textContent=fe(iv);document.getElementById('tg').textContent=fe(n+iv);
 }
-async function saveDoc(status){
+async function saveDoc(status,trancheId){
   const cn=document.getElementById('d-cnome').value.trim();
   const tipo=document.getElementById('d-tipo').value;
   const data=document.getElementById('d-data').value;
-  if(!data){alert('Inserisci la data del documento.');return;}
+  if(!data){alert('Inserisci la data del documento.');return false;}
   const n=rows.reduce((s,r)=>s+r.qty*r.price,0),rt=parseFloat(document.getElementById('iva-r').value)||0;
   const statoDb={bozza:'bozza',inviato:'emesso',pagato:'pagato'}[status]||status;
 
   let numero=editNumero;
   if(statoDb!=='bozza'){
     numero=await ensureNumero(editNumero,tipo,data);
-    if(!numero)return; // errore già mostrato da ensureNumero
+    if(!numero)return false; // errore già mostrato da ensureNumero
   }
 
   const cliente={nome:cn,piva:document.getElementById('d-cpiva').value,email:document.getElementById('d-cemail').value,
@@ -1740,22 +1794,22 @@ async function saveDoc(status){
   let invoiceId=editId;
   if(invoiceId){
     const{error}=await supabaseClient.from('invoices').update(payload).eq('id',invoiceId);
-    if(error){alert('Errore nel salvataggio del documento: '+error.message);return;}
+    if(error){alert('Errore nel salvataggio del documento: '+error.message);return false;}
   } else {
     const{data:inserted,error}=await supabaseClient.from('invoices').insert(payload).select().single();
-    if(error){alert('Errore nel salvataggio del documento: '+error.message);return;}
+    if(error){alert('Errore nel salvataggio del documento: '+error.message);return false;}
     invoiceId=inserted.id;
   }
 
   // Sostituzione integrale delle righe: più semplice e robusto di un diff
   // incrementale per un numero di voci tipicamente piccolo.
   const{error:delErr}=await supabaseClient.from('invoice_lines').delete().eq('invoice_id',invoiceId);
-  if(delErr){alert('Errore nel salvataggio delle righe: '+delErr.message);return;}
+  if(delErr){alert('Errore nel salvataggio delle righe: '+delErr.message);return false;}
   if(rows.length){
     const linePayload=rows.map((r,i)=>({invoice_id:invoiceId,numero_linea:i+1,descrizione:r.desc,
       quantita:r.qty,unita_misura:r.um,prezzo_unitario:r.price,prezzo_totale:r.qty*r.price}));
     const{error:linesErr}=await supabaseClient.from('invoice_lines').insert(linePayload);
-    if(linesErr){alert('Errore nel salvataggio delle righe: '+linesErr.message);return;}
+    if(linesErr){alert('Errore nel salvataggio delle righe: '+linesErr.message);return false;}
   }
 
   if(document.getElementById('d-svc').checked&&cn&&!clients.find(c=>c.nome===cn)){
@@ -1765,8 +1819,20 @@ async function saveDoc(status){
     await loadClients();
   }
 
+  // Aggancio opzionale a una tranche (Fase 2 fatturazione a tranche): il chiamante
+  // (generaDaTranche) precompila il form con i dati della tranche e passa il suo id
+  // qui solo per scrivere il legame dopo l'insert — saveDoc non sa nient'altro del
+  // piano tranche, non lo valida, non lo ricalcola.
+  if(trancheId&&(tipo==='proforma'||tipo==='fattura')){
+    const upd=tipo==='proforma'?{stato:'proforma',proforma_id:invoiceId}:{stato:'fatturata',fattura_id:invoiceId};
+    const{error:trErr}=await supabaseClient.from('quote_tranches').update(upd).eq('id',trancheId);
+    if(trErr)alert('Il documento è stato creato correttamente, ma non è stato possibile aggiornare lo stato della tranche: '+trErr.message);
+  }
+
   pendingPrevRef=null;
-  await loadDocs();resetDoc();goTo('documenti');
+  await loadDocs();resetDoc();
+  if(!trancheId)goTo('documenti'); // generazione da tranche: resta sul piano tranche, non naviga via
+  return true;
 }
 function editDoc(id){
   const d=docs.find(x=>x.id===id);if(!d)return;
@@ -3212,6 +3278,222 @@ function creaNotaCredito(id,e){
   document.getElementById('form-title').textContent=`Nota di credito — storno fattura ${d.num}`;
   goTo('nuovo');
   showToast();
+}
+
+// ══ PIANO TRANCHE (fatturazione a tranche da preventivo) ══
+// Tabella isolata quote_tranches (gestionale_schema.sql sez. 15). Non tocca
+// invoices/invoice_lines. Riusa saveDoc/ensureNumero per generare i documenti,
+// mai genXML/fmtAmt/prossimo_numero/convDoc direttamente.
+function isTrancheLocked(){return trancheRows.some(r=>r.stato==='fatturata');}
+
+async function openTranche(id,e){
+  e&&e.stopPropagation();
+  // Letto fresco da DB (serve invoices.imponibile, assente da docs[] — vedi fromDbInvoice).
+  const{data:prevRow,error}=await supabaseClient.from('invoices').select('*').eq('id',id).single();
+  if(error||!prevRow){alert('Errore nel caricamento del preventivo: '+(error?.message||'non trovato'));return;}
+  if(prevRow.tipo!=='preventivo'){alert('Il piano tranche si apre solo da un preventivo.');return;}
+  currentTranchePreventivo=prevRow;
+  await loadTrancheRows();
+  document.getElementById('tranche-title').textContent='Piano tranche — '+(prevRow.numero||'bozza');
+  document.getElementById('tranche-sub').textContent=(prevRow.cliente_nome||'—')+' · Imponibile preventivo: '+fe(prevRow.imponibile||0);
+  document.getElementById('ov-tranche').classList.add('open');
+}
+
+async function loadTrancheRows(){
+  const{data,error}=await supabaseClient.from('quote_tranches').select('*')
+    .eq('preventivo_id',currentTranchePreventivo.id).order('ordine');
+  if(error){alert('Errore nel caricamento del piano tranche: '+error.message);return;}
+  // Valori DB presi cosi come sono, MAI ricalcolati qui al caricamento: importo_imponibile
+  // di una riga già salvata è la fonte di verità (decisione approvata), non un derivato
+  // vivo della percentuale.
+  trancheRows=(data||[]).map(r=>({dbId:r.id,descrizione:r.descrizione,percentuale:Number(r.percentuale),
+    importo_imponibile:Number(r.importo_imponibile),stato:r.stato,proforma_id:r.proforma_id,fattura_id:r.fattura_id}));
+  renderTranchePlan();
+}
+
+function recalcTrancheAmounts(){
+  const round2=n=>Math.round((n+Number.EPSILON)*100)/100;
+  const imp=currentTranchePreventivo?.imponibile||0;
+  let sommaImporti=0,sommaPerc=0;
+  trancheRows.forEach((r,i)=>{
+    const isLast=i===trancheRows.length-1;
+    if(r.stato!=='da_fatturare'){
+      // Tranche già in proforma/fatturata: importo storico congelato, non si ritocca
+      // per un cambio di percentuale su un'altra riga del piano.
+      sommaImporti+=r.importo_imponibile;
+      sommaPerc+=parseFloat(r.percentuale)||0;
+      return;
+    }
+    if(isLast){
+      // Il campo % dell'ultima riga è disabilitato in UI (l'utente non lo digita mai):
+      // va calcolato qui come residuo, altrimenti resterebbe a 0 e la somma non
+      // arriverebbe mai a 100 — bloccando il salvataggio del piano per sempre.
+      r.percentuale=round2(100-sommaPerc);
+      r.importo_imponibile=round2(imp-sommaImporti);
+    } else {
+      r.importo_imponibile=round2(imp*(parseFloat(r.percentuale)||0)/100);
+      sommaPerc+=parseFloat(r.percentuale)||0;
+    }
+    sommaImporti+=r.importo_imponibile;
+  });
+}
+
+function updateTrancheSumLabel(){
+  const somma=Math.round(trancheRows.reduce((s,r)=>s+(parseFloat(r.percentuale)||0),0)*100)/100;
+  const lbl=document.getElementById('tranche-sum-label');
+  lbl.textContent='Totale percentuali: '+somma+'%';
+  lbl.style.color=somma===100?'var(--green)':'var(--red)';
+  document.getElementById('tranche-save-btn').disabled=isTrancheLocked()||somma!==100||trancheRows.length===0;
+}
+
+function trancheRowHTML(r,idx,locked){
+  const isLast=idx===trancheRows.length-1;
+  const canEdit=!locked&&r.stato==='da_fatturare';
+  const badgeClass={da_fatturare:'bb',proforma:'bprf',fatturata:'bpg'}[r.stato]||'bb';
+  const genBtns=r.dbId
+    ?`${r.stato==='da_fatturare'?`<button class="btn btn-sm btn-accent" onclick="generaDaTranche('${r.dbId}','proforma',event)">→ Proforma</button>`:''}
+      ${r.stato!=='fatturata'?`<button class="btn btn-sm btn-green" onclick="generaDaTranche('${r.dbId}','fattura',event)">→ Fattura</button>`:''}`
+    :'<span style="font-size:.75rem;color:var(--ink-3)">Salva il piano per generare documenti</span>';
+  return`<div class="row-ed" data-idx="${idx}">
+    <div class="row-ed-top">
+      <span style="font-size:.75rem;color:var(--ink-3);width:20px;flex-shrink:0">#${idx+1}</span>
+      <input type="text" class="desc" value="${esc(r.descrizione)}" ${canEdit?'':'disabled'}
+        oninput="upTrancheRow(${idx},'descrizione',this.value)" placeholder="Descrizione tranche">
+      <span class="badge ${badgeClass}">${r.stato}</span>
+      ${canEdit?`<button class="btn btn-sm btn-danger" onclick="rmTrancheRow(${idx})">✕</button>`:''}
+    </div>
+    <div class="row-ed-bot">
+      <input type="number" min="0.01" max="100" step="0.01" value="${r.percentuale}" ${(!canEdit||isLast)?'disabled':''}
+        oninput="upTrancheRow(${idx},'percentuale',this.value)" style="width:80px;flex-shrink:0">
+      <span style="font-size:.8rem;color:var(--ink-2);flex-shrink:0">%${isLast?' (saldo)':''}</span>
+      <span class="tot">${fe(r.importo_imponibile)}</span>
+    </div>
+    <div style="display:flex;gap:7px;margin-top:6px">${genBtns}</div>
+  </div>`;
+}
+
+function renderTranchePlan(){
+  const locked=isTrancheLocked();
+  document.getElementById('tranche-locked-msg').style.display=locked?'block':'none';
+  document.getElementById('tranche-add-btn').style.display=locked?'none':'inline-flex';
+  const c=document.getElementById('tranche-rows-c');
+  c.innerHTML=trancheRows.length
+    ?trancheRows.map((r,i)=>trancheRowHTML(r,i,locked)).join('')
+    :'<p style="font-size:.79rem;color:var(--ink-3);margin-bottom:7px">Nessuna tranche — usa "+ Aggiungi tranche".</p>';
+  updateTrancheSumLabel();
+}
+
+function addTrancheRow(){
+  if(isTrancheLocked())return;
+  trancheRows.push({dbId:null,descrizione:'',percentuale:0,importo_imponibile:0,stato:'da_fatturare',proforma_id:null,fattura_id:null});
+  recalcTrancheAmounts();
+  renderTranchePlan();
+}
+
+function rmTrancheRow(idx){
+  const r=trancheRows[idx];
+  if(!r||r.stato!=='da_fatturare')return; // difesa: il bottone non c'è già in questo caso, ma niente si fida solo della UI
+  trancheRows.splice(idx,1);
+  recalcTrancheAmounts();
+  renderTranchePlan();
+}
+
+function upTrancheRow(idx,field,value){
+  const r=trancheRows[idx];
+  if(!r||r.stato!=='da_fatturare')return;
+  if(field==='percentuale'){
+    r.percentuale=parseFloat(value)||0;
+    recalcTrancheAmounts();
+    // Aggiorna solo gli importi mostrati (e la % dell'ultima riga, calcolata come
+    // residuo) senza un re-render completo: perderebbe il focus dell'input mentre
+    // l'utente sta ancora digitando (stesso motivo per cui upRow() sulle righe
+    // documento non richiama renderRows()). L'input % dell'ultima riga è comunque
+    // disabled, quindi aggiornarne il .value via JS non tocca alcun focus reale.
+    const lastIdx=trancheRows.length-1;
+    trancheRows.forEach((rr,i)=>{
+      const rowEl=document.querySelector(`#tranche-rows-c [data-idx="${i}"]`);
+      if(!rowEl)return;
+      const totEl=rowEl.querySelector('.tot');
+      if(totEl)totEl.textContent=fe(rr.importo_imponibile);
+      if(i===lastIdx){
+        const pctEl=rowEl.querySelector('input[type="number"]');
+        if(pctEl)pctEl.value=rr.percentuale;
+      }
+    });
+    updateTrancheSumLabel();
+  } else {
+    r[field]=value;
+  }
+}
+
+async function saveTranchePlan(){
+  if(isTrancheLocked())return;
+  const somma=Math.round(trancheRows.reduce((s,r)=>s+(parseFloat(r.percentuale)||0),0)*100)/100;
+  if(somma!==100){alert('La somma delle percentuali deve essere 100 (attuale: '+somma+'%).');return;}
+  if(!trancheRows.length){alert('Aggiungi almeno una tranche.');return;}
+  if(trancheRows.some(r=>!r.descrizione.trim())){alert('Ogni tranche deve avere una descrizione.');return;}
+
+  const preventivoId=currentTranchePreventivo.id;
+  const payload=trancheRows.map((r,i)=>({
+    preventivo_id:preventivoId,ordine:i+1,descrizione:r.descrizione.trim(),
+    percentuale:r.percentuale,importo_imponibile:r.importo_imponibile,
+    stato:r.stato,proforma_id:r.proforma_id,fattura_id:r.fattura_id
+  }));
+
+  // Sostituzione integrale (stesso pattern di invoice_lines in saveDoc): elimina
+  // e reinserisce tutto il piano. L'insert multi-riga è una singola query, quindi
+  // il trigger deferred di somma%=100 valida l'intero batch in un colpo solo.
+  const{error:delErr}=await supabaseClient.from('quote_tranches').delete().eq('preventivo_id',preventivoId);
+  if(delErr){alert('Errore nel salvataggio del piano: '+delErr.message);return;}
+  const{error:insErr}=await supabaseClient.from('quote_tranches').insert(payload);
+  if(insErr){alert('Errore nel salvataggio del piano: '+insErr.message);return;}
+
+  showMsg('✓ Piano tranche salvato.','ok');
+  await loadTrancheRows();
+}
+
+async function generaDaTranche(trancheId,targetTipo,e){
+  e&&e.stopPropagation();
+  // Riletta da DB apposta, mai dedotta da trancheRows in memoria (decisione
+  // approvata): l'importo che finisce sul documento fiscale deve venire dalla
+  // fonte di verità al momento esatto della generazione.
+  const{data:tr,error:trErr}=await supabaseClient.from('quote_tranches').select('*').eq('id',trancheId).single();
+  if(trErr||!tr){alert('Errore nel caricamento della tranche: '+(trErr?.message||'non trovata'));return;}
+  if(tr.stato==='fatturata'){alert('Questa tranche è già fatturata.');return;}
+  if(targetTipo==='proforma'&&tr.stato!=='da_fatturare'){alert('Questa tranche non è più "da fatturare".');return;}
+
+  const{data:prev,error:prevErr}=await supabaseClient.from('invoices').select('*').eq('id',tr.preventivo_id).single();
+  if(prevErr||!prev){alert('Errore nel caricamento del preventivo: '+(prevErr?.message||'non trovato'));return;}
+
+  const label=targetTipo==='proforma'?'una proforma':'una fattura';
+  const avviso=targetTipo==='fattura'?'\n\nVerrà assegnato un numero definitivo tramite la numerazione atomica esistente: non è annullabile.':'';
+  if(!confirm(`Generare ${label} per la tranche "${tr.descrizione}" (${fe(tr.importo_imponibile)})?`+avviso))return;
+
+  // Precompila il form #nuovo esattamente come convDoc/creaNotaCredito, ma con
+  // una sola riga (la tranche) e SENZA archiviare il preventivo: le altre
+  // tranche del piano possono ancora essere da fatturare.
+  resetDoc();
+  document.getElementById('d-tipo').value=targetTipo;
+  document.getElementById('d-data').value=new Date().toISOString().slice(0,10);
+  document.getElementById('d-cnome').value=prev.cliente_nome||'';
+  document.getElementById('d-cpiva').value=prev.cliente_piva||'';
+  document.getElementById('d-cemail').value=prev.cliente_email||'';
+  document.getElementById('d-cind').value=prev.cliente_indirizzo||'';
+  document.getElementById('d-ccap').value=prev.cliente_cap||'';
+  document.getElementById('d-ccomune').value=prev.cliente_comune||'';
+  document.getElementById('d-cprov').value=prev.cliente_provincia||'';
+  document.getElementById('d-ccoddest').value=prev.cliente_cod_dest||'';
+  document.getElementById('d-cpec').value=prev.cliente_pec_sdi||'';
+  document.getElementById('iva-r').value=prev.aliquota_iva??0;
+  rows=[{id:String(Date.now()),desc:tr.descrizione,qty:1,um:'forfait',price:tr.importo_imponibile}];
+  renderRows();
+  pendingPrevRef=prev.numero||null;
+  editClientRef=(prev.company_id||prev.person_id)?{id:prev.company_id||prev.person_id,tipo:prev.company_id?'azienda':'persona'}:null;
+
+  const ok=await saveDoc('inviato',trancheId);
+  if(!ok)return; // errore già mostrato da saveDoc, non dichiarare successo
+  showMsg('✓ '+(targetTipo==='proforma'?'Proforma generata':'Fattura generata')+' dalla tranche.','ok');
+  await loadTrancheRows();
 }
 
 // ══ STORICO CLIENTE ══
