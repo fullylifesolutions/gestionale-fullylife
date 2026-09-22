@@ -1106,6 +1106,13 @@ async function doLogin(){
   await afterLogin();
 }
 async function doLogout(){
+  // Nasconde subito ogni schermata, in modo sincrono e prima di qualunque
+  // await: signOut() e il redirect che segue non sono istantanei, e nella
+  // finestra tra il click e il cambio pagina il browser continua comunque a
+  // dipingere lo stato corrente — senza questo si intravede per una
+  // frazione di secondo la schermata precedente (es. login-screen).
+  ['login-screen','recovery-screen','profile-screen'].forEach(s=>{document.getElementById(s).style.display='none';});
+  document.getElementById('app-shell').style.visibility='hidden';
   await supabaseClient.auth.signOut();
   window.location.href='../index.html';
 }
