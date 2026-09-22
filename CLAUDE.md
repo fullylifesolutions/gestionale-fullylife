@@ -72,6 +72,12 @@ Tabelle nuove di questo modulo:
   RLS `can_use_emitter()`) e firma consulente (`consulente/<user_id>.png`, RLS
   solo `is_admin()`); vedi sezioni 12-13 di `gestionale_schema.sql` e punto 4
   sotto
+- `quote_tranches` — piano di fatturazione a tranche (acconto/tranche/saldo...)
+  su un preventivo esistente: percentuali variabili, `importo_imponibile` come
+  fonte di verità, stato tracciato (`da_fatturare`/`proforma`/`fatturata`).
+  Isolata, non tocca `invoices`/`invoice_lines`. **Non ancora applicata al
+  progetto Supabase di produzione** — solo in TEST e nel commit locale del
+  repo (vedi punto 6 sotto)
 
 Permesso: flag `puo_fatturare` su `app_users` (ortogonale ai ruoli esistenti
 `admin`/`consulente`/`consulente_limitato`), verificato via `can_bill()`.
@@ -147,6 +153,25 @@ qui — vedi la motivazione del punto 5 della lista dei domini sopra.
    duplicazione in produzione (un INSERT rilanciato per errore). Due
    template attivi: NDA SRC (migrazione 1:1 del vecchio `printNDA`,
    verificata con test di fedeltà byte-per-byte) e NDA Generale.
+6. [FATTO in TEST, non ancora in produzione] Fatturazione a tranche da
+   preventivo (`quote_tranches`): piano di N tranche con percentuali
+   variabili, quadratura automatica (le prime N-1 = `round2(imponibile *
+   percentuale/100)`, l'ultima assorbe il residuo — la somma torna sempre
+   esatta al centesimo). Genera proforma/fattura per singola tranche riusando
+   `saveDoc`/`ensureNumero` esistenti (`saveDoc` riceve solo un `tranche_id`
+   opzionale per scrivere il legame dopo l'insert) — `genXML`/`fmtAmt`/
+   `prossimo_numero`/`convDoc` non toccati. Trigger DB deferred valida che la
+   somma percentuali sia 100 per piano (difesa in profondità oltre al
+   controllo frontend). Piano bloccato (non più modificabile) quando almeno
+   una tranche è già fatturata; le tranche ancora da fatturare restano
+   comunque generabili. Collaudato in TEST: durante il collaudo è emerso un
+   rischio reale di doppia fatturazione — il bottone generico "→ Fattura"
+   della lista documenti (`convDoc`) non sa nulla del piano tranche e
+   genererebbe un documento scollegato — risolto con un redirect al piano
+   tranche per le proforma che ne fanno parte (`quote_tranches.proforma_id`),
+   lasciando invariato il comportamento sulle proforma normali. Commit locale
+   fatto (`51b8f3d`), non pushato: lo schema `quote_tranches` non è ancora
+   applicato al Supabase di produzione.
 
 ## Note di architettura / attenzioni
 
@@ -171,3 +196,27 @@ sistemare: `STUDIO` del consulente è composto da indirizzo+CAP+comune+
 provincia, mentre `INDIRIZZO` dell'azienda è una semplice concatenazione/
 join. Replica un comportamento storico voluto — non uniformare i due
 campi.
+
+**Fatturazione a tranche.** `quote_tranches` (`preventivo_id`, `ordine`,
+`descrizione`, `percentuale`, `importo_imponibile`, `stato`, `proforma_id`,
+`fattura_id`) è isolata: non ha bisogno di toccare `invoices.convertito_da`
+(che resta morto, mai valorizzato dal frontend — vedi commento nello schema),
+perché ha i propri FK diretti verso i documenti generati.
+`importo_imponibile` è la fonte di verità una volta salvato: la generazione
+del documento lo rilegge sempre fresco da DB, mai da un valore tenuto in
+memoria nel frontend (`trancheRows`). Il calcolo lavora sempre su
+`invoices.imponibile` (già colonna separata dal totale), mai sul totale —
+nessuna assunzione "imponibile=totale" del regime forfettario è stata
+introdotta. Il trigger di somma percentuali è un *constraint trigger*
+`deferrable initially deferred`: necessario perché una riga vista in
+isolamento non somma mai 100 finché non sono state inserite tutte le righe
+del piano nella stessa transazione (un trigger immediato fallirebbe già sul
+primo insert del batch).
+
+Attenzione per chi tocca la lista documenti in futuro: una proforma con una
+riga in `quote_tranches.proforma_id` NON deve mai fatturarsi dal bottone
+generico "→ Fattura" (`convDoc`) — solo dal piano tranche. Il bottone generico
+non aggiorna `quote_tranches`, quindi genererebbe una fattura vera, con un
+numero vero, scollegata dal piano (successo davvero in collaudo, corretto con
+un redirect in `diHTML()` verso `openTranche()` quando `trancheProformaMap`
+risolve la proforma).
