@@ -405,7 +405,15 @@ textarea{resize:vertical;min-height:58px}
       <div class="sep"></div>
       <p style="font-size:.69rem;font-weight:600;color:var(--ink-2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Cliente</p>
       <div class="grid2" style="margin-bottom:8px">
-        <div class="field"><label>Nome / Ragione sociale</label><input type="text" id="d-cnome" placeholder="Azienda S.r.l."></div>
+        <div class="field"><label>Nome / Ragione sociale</label>
+          <div style="display:flex;gap:6px">
+            <input type="text" id="d-cnome" placeholder="Azienda S.r.l." style="flex:1">
+            <button class="btn btn-sm" onclick="openCliPicker(document.getElementById('d-cnome').value.trim())" title="Cerca il cliente per nome in anagrafica" style="flex-shrink:0;white-space:nowrap">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              Cerca
+            </button>
+          </div>
+        </div>
         <div class="field"><label>P.IVA / C.F.</label>
           <div style="display:flex;gap:6px">
             <input type="text" id="d-cpiva" placeholder="Es. IT12345678901" style="flex:1">
@@ -972,7 +980,7 @@ textarea{resize:vertical;min-height:58px}
 
 <!-- MODALS -->
 <div class="overlay" id="ov-prod"><div class="modal"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:13px"><h3>Scegli dal catalogo</h3><button class="btn btn-sm" onclick="closeOv('prod')">✕</button></div><div id="pk-prod"></div></div></div>
-<div class="overlay" id="ov-cli"><div class="modal"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:13px"><h3>Carica cliente</h3><button class="btn btn-sm" onclick="closeOv('cli')">✕</button></div><div id="pk-cli"></div></div></div>
+<div class="overlay" id="ov-cli"><div class="modal"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:13px"><h3>Carica cliente</h3><button class="btn btn-sm" onclick="closeOv('cli')">✕</button></div><input type="text" id="pk-cli-search" placeholder="🔍  Cerca per nome, P.IVA, email…" oninput="renderCliPicker()" style="width:100%;font-size:.85rem;margin-bottom:10px"><div id="pk-cli"></div></div></div>
 
 <!-- Modal: trasferisci spese viaggio in documento -->
 <div class="overlay" id="ov-transfer">
@@ -2318,10 +2326,20 @@ function addFromPk(id,source){
   const list=source==='shared'?sharedProducts:products;
   const p=list.find(x=>x.id===id);if(p){addRow(p);closeOv('prod');}
 }
-function openCliPicker(){
+// prefill: testo già scritto nel campo Nome del documento, usato come ricerca iniziale
+function openCliPicker(prefill){
   if(!clients.length){alert('Nessun cliente in anagrafica.');return;}
-  document.getElementById('pk-cli').innerHTML=clients.map(c=>`<div class="cli-item" style="cursor:pointer;border:1px solid var(--border);border-radius:var(--r8);margin-bottom:5px" onclick="useClient('${c.id}','${c.tipo}')"><span class="cli-name">${c.nome}</span><span class="cli-info">${c.piva||''}</span></div>`).join('');
+  const s=document.getElementById('pk-cli-search');s.value=prefill||'';
+  renderCliPicker();
   document.getElementById('ov-cli').classList.add('open');
+  s.focus();
+}
+function renderCliPicker(){
+  // parole cercate separatamente: "Rossi Mario" trova anche "Mario Rossi"
+  const words=document.getElementById('pk-cli-search').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const list=clients.filter(c=>{const t=(c.nome+' '+(c.piva||'')+' '+(c.email||'')).toLowerCase();return words.every(w=>t.includes(w));});
+  if(!list.length){document.getElementById('pk-cli').innerHTML='<p style="color:var(--ink-3);font-size:.85rem;text-align:center;padding:16px 0">Nessun cliente trovato.</p>';return;}
+  document.getElementById('pk-cli').innerHTML=list.map(c=>`<div class="cli-item" style="cursor:pointer;border:1px solid var(--border);border-radius:var(--r8);margin-bottom:5px" onclick="useClient('${c.id}','${c.tipo}')"><span class="cli-name">${c.nome}</span><span class="cli-info">${c.piva||''}</span></div>`).join('');
 }
 function closeOv(n){document.getElementById('ov-'+n).classList.remove('open');}
 document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('click',function(e){if(e.target===this)this.classList.remove('open');}));
