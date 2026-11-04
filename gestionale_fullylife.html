@@ -1098,7 +1098,7 @@ let docs=[],products=[],sharedProducts=[],categories=[],clients=[],settings={};
 let rows=[],editId=null,editNumero=null,editClientRef=null,editPrevRef=null,pendingPrevRef=null,docFilter='all';
 // ══ PIANO TRANCHE ══
 // currentTranchePreventivo: riga invoices (tipo='preventivo') aperta nel modal, letta fresca da DB
-// (serve invoices.imponibile, che fromDbInvoice() non riporta in docs[] — vedi nota lì).
+// (letta fresca per avere imponibile aggiornato al momento, non quello in docs[]).
 // trancheRows: righe quote_tranches in memoria, sync con DB solo dopo load/save espliciti.
 let currentTranchePreventivo=null,trancheRows=[];
 // proforma_id -> preventivo_id, per le proforma che appartengono a un piano tranche.
@@ -1106,6 +1106,10 @@ let currentTranchePreventivo=null,trancheRows=[];
 // (convDoc, non tocca quote_tranches) generi una fattura duplicata scollegata
 // dal piano — vedi trancheBtn/convBtn in diHTML().
 let trancheProformaMap={};
+// preventivo_id -> somma importo_imponibile delle tranche già in proforma o fatturate.
+// Serve alla dashboard per mostrare dei preventivi a tranche solo il residuo
+// (le tranche in proforma sono già contate in "Da incassare").
+let trancheFatturatoMap={};
 let npLogoB64=null,npLogoMime=null,npColor=0;
 let trvTimer=null;
 
@@ -1221,7 +1225,7 @@ function fromDbInvoice(row){
     cliente:{nome:row.cliente_nome,piva:row.cliente_piva,email:row.cliente_email,ind:row.cliente_indirizzo,
       cap:row.cliente_cap,comune:row.cliente_comune,prov:row.cliente_provincia,
       codDest:row.cliente_cod_dest,pecSdi:row.cliente_pec_sdi},
-    righe,ivaRate:row.aliquota_iva,totale:row.totale,note:row.note,status:statoUi,
+    righe,ivaRate:row.aliquota_iva,imponibile:row.imponibile,totale:row.totale,note:row.note,status:statoUi,
     dataPagamento:row.data_pagamento,metodoPagamento:row.metodo_pagamento,archiviato:row.archiviato,
     prevRef:row.prev_ref,clientId:row.company_id||row.person_id||null,
     clientTipo:row.company_id?'azienda':(row.person_id?'persona':null)
@@ -1233,6 +1237,7 @@ async function loadDocs(){
   if(error){alert('Errore nel caricamento dei documenti: '+error.message);return;}
   docs=(data||[]).map(fromDbInvoice);
   await loadTrancheProformaLinks();
+  await loadTrancheFatturato();
   renderDash();renderDocList();
 }
 // Popola trancheProformaMap. Interroga TUTTE le righe con proforma_id valorizzato,
@@ -1244,6 +1249,12 @@ async function loadTrancheProformaLinks(){
   if(error){trancheProformaMap={};return;} // difesa: un errore qui non deve bloccare il caricamento documenti
   trancheProformaMap={};
   (data||[]).forEach(r=>{trancheProformaMap[r.proforma_id]=r.preventivo_id;});
+}
+async function loadTrancheFatturato(){
+  const{data,error}=await supabaseClient.from('quote_tranches').select('preventivo_id,importo_imponibile').in('stato',['proforma','fatturata']);
+  trancheFatturatoMap={};
+  if(error)return; // difesa: in caso di errore la dashboard mostra i totali pieni, come prima
+  (data||[]).forEach(r=>{trancheFatturatoMap[r.preventivo_id]=(trancheFatturatoMap[r.preventivo_id]||0)+Number(r.importo_imponibile);});
 }
 // Assegna il numero definitivo SOLO alla prima transizione fuori da bozza, mai più
 // di una volta sullo stesso documento — vedi contratto d'uso di prossimo_numero()
@@ -1568,9 +1579,16 @@ function renderDash(){
   const anno=parseInt(settings.anno||new Date().getFullYear());
   // Fatturato = fatture definitive dell'anno (escluse archiviate)
   const tf=docs.filter(d=>d.tipo==='fattura'&&!d.archiviato&&(d.data||'').startsWith(anno)).reduce((s,d)=>s+d.totale,0);
-  // Preventivi aperti = preventivi non archiviati
-  const preventiviAperti=docs.filter(d=>d.tipo==='preventivo'&&!d.archiviato);
-  const tp=preventiviAperti.reduce((s,d)=>s+d.totale,0);
+  // Preventivi aperti = preventivi non archiviati, al netto delle tranche già in proforma o fatturate.
+  // Le tranche sono in imponibile, il totale preventivo include IVA/bollo: si toglie
+  // la stessa quota proporzionale dal totale. Un preventivo tutto fatturato non conta.
+  const residuoPrev=d=>{
+    const fatt=trancheFatturatoMap[d.id]||0;
+    if(!fatt||!(d.imponibile>0))return d.totale;
+    return Math.max(0,d.totale*(1-fatt/d.imponibile));
+  };
+  const preventiviAperti=docs.filter(d=>d.tipo==='preventivo'&&!d.archiviato&&residuoPrev(d)>0.005);
+  const tp=preventiviAperti.reduce((s,d)=>s+residuoPrev(d),0);
   // Da incassare = proforma non archiviate e non pagate (la fattura si emette a pagamento avvenuto)
   const di=docs.filter(d=>d.tipo==='proforma'&&!d.archiviato&&d.status!=='pagato').reduce((s,d)=>s+d.totale,0);
   // Pagati = fatture definitive (escluse archiviate)
@@ -3306,7 +3324,7 @@ function isTrancheLocked(){return trancheRows.some(r=>r.stato==='fatturata');}
 
 async function openTranche(id,e){
   e&&e.stopPropagation();
-  // Letto fresco da DB (serve invoices.imponibile, assente da docs[] — vedi fromDbInvoice).
+  // Letto fresco da DB: imponibile aggiornato al momento, non quello in docs[].
   const{data:prevRow,error}=await supabaseClient.from('invoices').select('*').eq('id',id).single();
   if(error||!prevRow){alert('Errore nel caricamento del preventivo: '+(error?.message||'non trovato'));return;}
   if(prevRow.tipo!=='preventivo'){alert('Il piano tranche si apre solo da un preventivo.');return;}
