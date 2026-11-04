@@ -440,7 +440,7 @@ textarea{resize:vertical;min-height:58px}
       <div id="rows-c"></div>
       <div class="tots">
         <div class="tot-row"><span>Imponibile</span><span id="tn">€ 0,00</span></div>
-        <div class="tot-row"><span>IVA <select class="iva-sel" id="iva-r" onchange="calcTots()"><option value="0">Esente</option><option value="4">4%</option><option value="10">10%</option><option value="22" selected>22%</option></select></span><span id="ti">€ 0,00</span></div>
+        <div class="tot-row"><span>IVA <select class="iva-sel" id="iva-r" onchange="calcTots()"><option value="0" selected>Esente</option><option value="4">4%</option><option value="10">10%</option><option value="22">22%</option></select></span><span id="ti">€ 0,00</span></div>
         <div class="tot-row tot-grand"><span>Totale</span><span id="tg">€ 0,00</span></div>
       </div>
     </div>
@@ -1753,7 +1753,9 @@ function resetDoc(){
   document.getElementById('d-num').value='Assegnato all\'emissione';
   document.getElementById('d-data').value=new Date().toISOString().split('T')[0];
   ['d-scad','d-cnome','d-cpiva','d-cemail','d-cind','d-ccap','d-ccomune','d-cprov','d-ccoddest','d-cpec','d-note'].forEach(id=>document.getElementById(id).value='');
-  document.getElementById('iva-r').value='22';document.getElementById('d-svc').checked=false;renderRows();
+  // IVA di partenza dal regime dell'emittente: forfettario (RF19) e minimi (RF02) = Esente, altrimenti 22%.
+  document.getElementById('iva-r').value=['RF19','RF02'].includes(settings.regimeFiscale||'RF19')?'0':'22';
+  document.getElementById('d-svc').checked=false;renderRows();
 }
 function addRow(p){rows.push({id:String(Date.now()),desc:p?p.nome:'',qty:1,um:p?p.um:'ora',price:p?p.prezzo:0});renderRows();}
 function renderRows(){
