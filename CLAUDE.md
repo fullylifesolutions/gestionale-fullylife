@@ -220,3 +220,15 @@ non aggiorna `quote_tranches`, quindi genererebbe una fattura vera, con un
 numero vero, scollegata dal piano (successo davvero in collaudo, corretto con
 un redirect in `diHTML()` verso `openTranche()` quando `trancheProformaMap`
 risolve la proforma).
+
+**Spese di viaggio = trasferte registrate in GESPP.** La sezione non ha più un
+form proprio: elenca `travel_trips` (create in GESPP) e le inserisce come voce
+"Rimborso spese trasferta" in documenti in bozza o preventivi (mai
+fatture/proforma emesse, mai archiviati, mai documenti legati a un piano
+tranche). Il collegamento `travel_trips.invoice_id` si scrive solo DOPO il
+salvataggio riuscito in `saveDoc` (`pendingTravelTripId` →
+`travel_trip_link_invoice`), e una conversione `convDoc` lo sposta sul nuovo
+documento al suo salvataggio (`pendingTravelMoveFrom` →
+`travel_trip_move_invoice`). Chi tocca `saveDoc`/`convDoc`/`resetDoc`/`editDoc`
+deve preservare questi agganci: sono la difesa contro la doppia fatturazione
+di una trasferta.

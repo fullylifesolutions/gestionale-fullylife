@@ -586,61 +586,17 @@ textarea{resize:vertical;min-height:58px}
 </div>
 
 <!-- VIAGGIO -->
+<!-- Le trasferte si registrano in GESPP (tab "Trasferte", ogni consulente per
+     le aziende assegnate); qui chi fattura le vede e le inserisce in un
+     documento in bozza. Tabelle travel_trips/travel_trip_days. -->
 <div id="sec-viaggio" class="section">
-  <div class="topbar"><h2>Spese di viaggio</h2><button class="btn btn-sm" onclick="resetTravel()">Nuova trasferta</button></div>
-  <div class="card"><div class="card-head"><div class="hl"><div class="ci">🗺️</div><div><h3>Dati trasferta</h3></div></div></div>
-    <div class="card-body"><div class="grid2">
-      <div class="field"><label>Data</label><input type="date" id="t-data" oninput="atv()"></div>
-      <div class="field"><label>Cliente / Progetto</label><input type="text" id="t-cli" oninput="atv()"></div>
-      <div class="field"><label>Partenza</label><input type="text" id="t-da" oninput="atv();utl()"></div>
-      <div class="field"><label>Destinazione</label><input type="text" id="t-a" oninput="atv();utl()"></div>
-      <div class="field span2"><label>Descrizione attività</label><textarea id="t-desc" oninput="atv()"></textarea></div>
-    </div></div>
+  <div class="topbar"><h2>Spese di viaggio</h2><a class="btn btn-sm" id="tr-gespp-link" target="_blank" rel="noopener">Registra una trasferta in GESPP ↗</a></div>
+  <div class="ib">Le trasferte si registrano in <strong>GESPP → Trasferte</strong>, con giorno di partenza e di rientro e le spese giorno per giorno. Qui le inserisci in un documento in bozza o in un preventivo, oppure generi la nota spese in PDF.</div>
+  <div style="display:flex;gap:6px;margin-bottom:12px">
+    <button class="btn btn-sm" id="trf-da" onclick="setTripFilter('da')">Da fatturare</button>
+    <button class="btn btn-sm" id="trf-in" onclick="setTripFilter('in')">Già in un documento</button>
   </div>
-  <div class="card"><div class="card-head"><div class="hl"><div class="ci">🚗</div><div><h3>Rimborso chilometrico <span class="badge bp" style="margin-left:5px">Tab. ACI 2026</span></h3></div></div></div>
-    <div class="card-body">
-      <div class="ib">Consulta <a href="https://costikm.aci.it/" target="_blank" style="color:var(--accent);font-weight:600">costikm.aci.it</a> per la tariffa €/km del tuo veicolo.</div>
-      <div class="grid3">
-        <div class="field"><label>Km percorsi</label><input type="number" id="t-km" placeholder="0" min="0" oninput="ctrv();atv()"></div>
-        <div class="field"><label>Tariffa ACI (€/km)</label><input type="number" id="t-tar" placeholder="0.5320" step="0.0001" oninput="ctrv();atv()"></div>
-        <div class="field"><label>Veicolo</label><input type="text" id="t-veicolo" oninput="atv()"></div>
-      </div>
-    </div>
-  </div>
-  <div class="card"><div class="card-head"><div class="hl"><div class="ci">🛣️</div><div><h3>Pedaggi</h3></div></div></div>
-    <div class="card-body">
-      <div class="mrow"><div class="field"><label>Costo pedaggi (€)</label><input type="number" id="t-ped" placeholder="0,00" step="0.01" min="0" oninput="ctrv();atv()"></div><a id="toll-lnk" href="https://tollguru.com/italy-toll-calculator" target="_blank" class="btn-toll"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15,3 21,3 21,9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>TollGuru</a></div>
-      <p id="toll-note" style="font-size:.72rem;color:var(--ink-2);margin-top:6px">Inserisci partenza e destinazione per calcolare i pedaggi.</p>
-    </div>
-  </div>
-  <div class="card"><div class="card-head"><div class="hl"><div class="ci">🧾</div><div><h3>Altre spese</h3></div></div></div>
-    <div class="card-body"><div class="grid2">
-      <div class="field"><label>Parcheggi (€)</label><input type="number" id="t-park" placeholder="0,00" step="0.01" min="0" oninput="ctrv();atv()"></div>
-      <div class="field"><label>Treni / Aerei / Taxi (€)</label><input type="number" id="t-mezzo" placeholder="0,00" step="0.01" min="0" oninput="ctrv();atv()"></div>
-      <div class="field"><label>Vitto (€)</label><input type="number" id="t-vitto" placeholder="0,00" step="0.01" min="0" oninput="ctrv();atv()"></div>
-      <div class="field"><label>Alloggio (€)</label><input type="number" id="t-alloggio" placeholder="0,00" step="0.01" min="0" oninput="ctrv();atv()"></div>
-      <div class="field span2"><label>Altre spese (€)</label><input type="number" id="t-altre" placeholder="0,00" step="0.01" min="0" oninput="ctrv();atv()"></div>
-    </div></div>
-  </div>
-  <div class="card"><div class="card-head"><div class="hl"><div class="ci">💶</div><div><h3>Riepilogo</h3></div></div></div>
-    <div class="card-body"><table class="trip-sum"><tbody>
-      <tr><td>🚗 Rimborso chilometrico</td><td id="ts-km" class="zero">€ 0,00</td></tr>
-      <tr><td>🛣️ Pedaggi</td><td id="ts-ped" class="zero">€ 0,00</td></tr>
-      <tr><td>🅿️ Parcheggi</td><td id="ts-park" class="zero">€ 0,00</td></tr>
-      <tr><td>🚆 Trasporti</td><td id="ts-mezzo" class="zero">€ 0,00</td></tr>
-      <tr><td>🍽️ Vitto</td><td id="ts-vitto" class="zero">€ 0,00</td></tr>
-      <tr><td>🏨 Alloggio</td><td id="ts-alloggio" class="zero">€ 0,00</td></tr>
-      <tr><td>📎 Altre spese</td><td id="ts-altre" class="zero">€ 0,00</td></tr>
-      <tr class="tt"><td>Totale rimborso</td><td id="ts-tot">€ 0,00</td></tr>
-    </tbody></table></div>
-  </div>
-  <div style="display:flex;gap:9px;justify-content:flex-end;margin-bottom:38px">
-    <button class="btn" onclick="transferToDoc()">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      Aggiungi in fattura/preventivo
-    </button>
-    <button class="btn btn-primary" onclick="genTravelPDF()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>Genera PDF nota spese</button>
-  </div>
+  <div id="trip-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:38px"></div>
 </div>
 
 <!-- IMPOSTAZIONI -->
@@ -989,7 +945,7 @@ textarea{resize:vertical;min-height:58px}
       <h3>Aggiungi spese in un documento</h3>
       <button class="btn btn-sm" onclick="closeOv('transfer')">✕</button>
     </div>
-    <p style="font-size:.8rem;color:var(--ink-2);margin-bottom:14px">Le spese verranno aggiunte come voce <em>"Rimborso spese trasferta"</em> nel documento scelto. Ricorda che in regime forfettario concorrono al fatturato.</p>
+    <p style="font-size:.8rem;color:var(--ink-2);margin-bottom:14px">Le spese verranno aggiunte come voce <em>"Rimborso spese trasferta"</em> nel documento scelto. Sono elencati i documenti <strong>in bozza</strong> e i <strong>preventivi</strong>, mai fatture o proforma già emesse. Ricorda che in regime forfettario concorrono al fatturato.</p>
     <div id="transfer-doc-list" style="display:flex;flex-direction:column;gap:5px;max-height:320px;overflow-y:auto"></div>
     <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px">
       <button class="btn btn-primary" onclick="transferToNewDoc()">
@@ -1096,6 +1052,11 @@ let curId=null;
 let curEmitter=null;
 let docs=[],products=[],sharedProducts=[],categories=[],clients=[],settings={};
 let rows=[],editId=null,editNumero=null,editClientRef=null,editPrevRef=null,pendingPrevRef=null,docFilter='all';
+// Trasferte (sezione Spese di viaggio): pendingTravelTripId = trasferta aggiunta al form documento,
+// da collegare al documento dopo il salvataggio riuscito (saveDoc).
+// pendingTravelMoveFrom = documento convertito (convDoc): al salvataggio del nuovo documento
+// le trasferte collegate all'originale passano al nuovo (travel_trip_move_invoice).
+let trips=[],tripFilter='da',transferTripId=null,pendingTravelTripId=null,pendingTravelMoveFrom=null;
 // ══ PIANO TRANCHE ══
 // currentTranchePreventivo: riga invoices (tipo='preventivo') aperta nel modal, letta fresca da DB
 // (letta fresca per avere imponibile aggiornato al momento, non quello in docs[]).
@@ -1111,7 +1072,6 @@ let trancheProformaMap={};
 // (le tranche in proforma sono già contate in "Da incassare").
 let trancheFatturatoMap={};
 let npLogoB64=null,npLogoMime=null,npColor=0;
-let trvTimer=null;
 
 function pk(k){return`mp_${curId}_${k}`;}
 
@@ -1303,7 +1263,7 @@ async function enterProfile(id){
   document.getElementById('d-data').value=new Date().toISOString().split('T')[0];
   document.getElementById('d-num').value='Assegnato all\'emissione';
   rows=[];editId=null;editNumero=null;editPrevRef=null;editClientRef=null;renderRows();
-  loadTravel();goTo('home');
+  goTo('home');
 }
 function switchProfile(){
   curId=null;curEmitter=null;
@@ -1565,6 +1525,7 @@ function goTo(s){
   if(s==='documenti') renderDocList();
   if(s==='catalogo'){populateCatSelect();refreshCatalog();}
   if(s==='clienti') renderCliList();
+  if(s==='viaggio') renderTrips();
   if(s==='legali'){initNDA().then(initLegalEngine);}
   if(s==='impostazioni') loadSF();
   if(s==='utenti') renderUtenti();
@@ -1747,6 +1708,7 @@ async function delDoc(id,e){
 
 // ══ NEW DOC ══
 function resetDoc(){
+  pendingTravelTripId=null;pendingTravelMoveFrom=null;
   editId=null;editNumero=null;editPrevRef=null;editClientRef=null;pendingPrevRef=null;rows=[];
   document.getElementById('form-title').textContent='Nuovo documento';
   document.getElementById('d-tipo').value='preventivo';
@@ -1791,6 +1753,14 @@ async function saveDoc(status,trancheId){
   const tipo=document.getElementById('d-tipo').value;
   const data=document.getElementById('d-data').value;
   if(!data){alert('Inserisci la data del documento.');return false;}
+  // Trasferta in attesa di collegamento: si ricontrolla fresca da DB che non sia
+  // nel frattempo finita in un altro documento, PRIMA di salvare (doppia fatturazione).
+  const travelTripId=pendingTravelTripId&&rows.some(r=>r.travelTripId===pendingTravelTripId)?pendingTravelTripId:null;
+  if(travelTripId){
+    const{data:tr,error:trErr}=await supabaseClient.from('travel_trips').select('invoice_id').eq('id',travelTripId).single();
+    if(trErr){alert('Errore nel controllo della trasferta: '+trErr.message);return false;}
+    if(tr.invoice_id&&tr.invoice_id!==editId){alert('Questa trasferta è già stata inserita in un altro documento. Togli la voce "Rimborso spese trasferta" prima di salvare.');return false;}
+  }
   const n=rows.reduce((s,r)=>s+r.qty*r.price,0),rt=parseFloat(document.getElementById('iva-r').value)||0;
   const statoDb={bozza:'bozza',inviato:'emesso',pagato:'pagato'}[status]||status;
 
@@ -1840,6 +1810,19 @@ async function saveDoc(status,trancheId){
     if(linesErr){alert('Errore nel salvataggio delle righe: '+linesErr.message);return false;}
   }
 
+  if(travelTripId){
+    const{error:lkErr}=await supabaseClient.rpc('travel_trip_link_invoice',{p_trip_id:travelTripId,p_invoice_id:invoiceId});
+    if(lkErr)alert('Il documento è stato salvato, ma la trasferta non è stata segnata come inserita: '+lkErr.message+'\n\nControlla in "Spese di viaggio" per non inserirla una seconda volta.');
+  }
+  pendingTravelTripId=null;
+  // Documento nato da una conversione (preventivo→proforma/fattura, proforma→fattura):
+  // le righe sono state copiate, quindi anche il collegamento delle trasferte si sposta.
+  if(pendingTravelMoveFrom&&pendingTravelMoveFrom!==invoiceId){
+    const{error:mvErr}=await supabaseClient.rpc('travel_trip_move_invoice',{p_from_invoice_id:pendingTravelMoveFrom,p_to_invoice_id:invoiceId});
+    if(mvErr)alert('Il documento è stato salvato, ma le trasferte del documento originale non sono state collegate a questo: '+mvErr.message);
+  }
+  pendingTravelMoveFrom=null;
+
   if(document.getElementById('d-svc').checked&&cn&&!clients.find(c=>c.nome===cn)){
     // Il form documento non distingue azienda/persona: un cliente salvato da qui è sempre
     // un'azienda. Per un cliente-persona va creato/modificato dall'anagrafica clienti.
@@ -1864,6 +1847,7 @@ async function saveDoc(status,trancheId){
 }
 function editDoc(id){
   const d=docs.find(x=>x.id===id);if(!d)return;
+  pendingTravelTripId=null;pendingTravelMoveFrom=null;
   editId=id;editNumero=d.numero||null;editPrevRef=d.prevRef||null;
   editClientRef=(d.clientId&&d.clientTipo)?{id:d.clientId,tipo:d.clientTipo}:null;
   rows=[...(d.righe||[])];
@@ -2440,22 +2424,66 @@ async function saveSettings(){
   savePD();updateSB();alert('Impostazioni salvate.');
 }
 
-// ══ TRAVEL ══
-const TF=['t-data','t-cli','t-da','t-a','t-desc','t-veicolo','t-km','t-tar','t-ped','t-park','t-mezzo','t-vitto','t-alloggio','t-altre'];
-function loadTravel(){TF.forEach(id=>{const v=localStorage.getItem(pk('tr_'+id));const el=document.getElementById(id);if(v&&el)el.value=v;});if(!localStorage.getItem(pk('tr_t-data'))){const el=document.getElementById('t-data');if(el)el.valueAsDate=new Date();}ctrv();utl();}
-function atv(){clearTimeout(trvTimer);trvTimer=setTimeout(()=>TF.forEach(id=>{const el=document.getElementById(id);if(el)localStorage.setItem(pk('tr_'+id),el.value);}),500);}
-function resetTravel(){if(!confirm('Resettare i dati trasferta?'))return;TF.forEach(id=>{localStorage.removeItem(pk('tr_'+id));const el=document.getElementById(id);if(el)el.value='';});document.getElementById('t-data').valueAsDate=new Date();ctrv();utl();}
-function gN(id){return parseFloat(document.getElementById(id).value)||0;}
-function stc(id,v){const el=document.getElementById(id);el.textContent=fe(v);el.className=v>0?'':'zero';}
-function ctrv(){
-  const rm=gN('t-km')*gN('t-tar'),ped=gN('t-ped'),park=gN('t-park'),mez=gN('t-mezzo'),vi=gN('t-vitto'),al=gN('t-alloggio'),al2=gN('t-altre');
-  const tot=rm+ped+park+mez+vi+al+al2;
-  stc('ts-km',rm);stc('ts-ped',ped);stc('ts-park',park);stc('ts-mezzo',mez);stc('ts-vitto',vi);stc('ts-alloggio',al);stc('ts-altre',al2);
-  document.getElementById('ts-tot').textContent=fe(tot);
+// ══ TRAVEL — trasferte registrate in GESPP (travel_trips / travel_trip_days) ══
+// Qui si leggono e basta: si creano e modificano in GESPP (tab "Trasferte").
+// Chi fattura le inserisce in un documento in BOZZA; dopo il salvataggio del
+// documento la trasferta viene collegata (travel_trip_link_invoice) e sparisce
+// da "Da fatturare" — una trasferta non può finire in due documenti.
+const TRIP_VOCI=[['pedaggi','🛣️ Pedaggi'],['parcheggi','🅿️ Parcheggi'],['trasporti','🚆 Treni/Aerei/Taxi'],['vitto','🍽️ Vitto'],['alloggio','🏨 Alloggio'],['altre','📎 Altre spese']];
+const GESPP_URL=new URL('../GESPP/spp_dashboard.html',window.location.href).href; // stessa struttura in TEST (cartelle sorelle) e su github.io
+// arrotondamento al centesimo senza errori di virgola mobile (65.435 → 65.44, come round() di Postgres)
+function tripR2(v){const n=Number(v)||0;return Number(Math.round(n+'e2')+'e-2');}
+function tripDayTotal(d){return tripR2(TRIP_VOCI.reduce((s,[k])=>s+tripR2(d[k]),0));}
+function tripTotal(t){return tripR2(tripR2(t.rimborso_km)+(t.travel_trip_days||[]).reduce((s,d)=>s+tripDayTotal(d),0));}
+function tripFmt(d){return new Date(d+'T12:00:00').toLocaleDateString('it-IT');}
+function tripPeriodo(t){return t.data_partenza===t.data_rientro?tripFmt(t.data_partenza):`${tripFmt(t.data_partenza)} – ${tripFmt(t.data_rientro)}`;}
+function tripCompany(t){return t.companies?.ragione_sociale||'—';}
+function tripLineDesc(t){
+  const quando=t.data_partenza===t.data_rientro?`del ${tripFmt(t.data_partenza)}`:`dal ${tripFmt(t.data_partenza)} al ${tripFmt(t.data_rientro)}`;
+  return `Rimborso spese trasferta ${t.partenza} - ${t.destinazione} ${quando}`;
 }
-function utl(){
-  const da=document.getElementById('t-da').value.trim(),a=document.getElementById('t-a').value.trim();
-  document.getElementById('toll-note').textContent=da&&a?`→ TollGuru: inserisci ${da} → ${a} per i pedaggi`:'Inserisci partenza e destinazione per calcolare i pedaggi.';
+async function loadTrips(){
+  const{data,error}=await supabaseClient.from('travel_trips').select('*, travel_trip_days(*), companies(ragione_sociale)').order('data_partenza',{ascending:false});
+  if(error){trips=[];document.getElementById('trip-list').innerHTML=`<p style="font-size:.83rem;color:var(--red)">Errore nel caricamento delle trasferte: ${esc(error.message)}</p>`;return false;}
+  trips=data||[];return true;
+}
+function setTripFilter(f){tripFilter=f;renderTrips();}
+async function renderTrips(){
+  document.getElementById('tr-gespp-link').href=GESPP_URL;
+  document.getElementById('trf-da').className='btn btn-sm'+(tripFilter==='da'?' btn-primary':'');
+  document.getElementById('trf-in').className='btn btn-sm'+(tripFilter==='in'?' btn-primary':'');
+  const list=document.getElementById('trip-list');
+  list.innerHTML='<p style="font-size:.83rem;color:var(--ink-2)">Caricamento…</p>';
+  if(!(await loadTrips()))return;
+  const l=trips.filter(t=>tripFilter==='da'?!t.invoice_id:!!t.invoice_id);
+  if(!l.length){list.innerHTML=`<p style="font-size:.83rem;color:var(--ink-2);padding:8px 0">${tripFilter==='da'?'Nessuna trasferta da fatturare.':'Nessuna trasferta già inserita in un documento.'}</p>`;return;}
+  list.innerHTML=l.map(t=>{
+    let stato='';
+    if(t.invoice_id){
+      const d=docs.find(x=>x.id===t.invoice_id);
+      stato=d?`<span class="badge ${d.status==='bozza'?'bb':'bf'}">${esc(d.tipo)} ${d.num?esc(d.num):'(bozza)'}</span>`
+             :'<span class="badge bb">documento di un altro emittente</span>';
+      // Scollegabile se il documento è in bozza o è un preventivo non archiviato
+      // (archiviato = già convertito) e senza tranche già in proforma/fattura
+      // (l'importo è già dentro le tranche): stessa regola di
+      // travel_trip_unlink_invoice() lato DB.
+      if(d&&(d.status==='bozza'||(d.tipo==='preventivo'&&!d.archiviato&&!(trancheFatturatoMap[d.id]>0))))stato+=` <button class="btn btn-sm" onclick="unlinkTrip('${t.id}')" title="Da usare solo se hai tolto la voce dal documento">Scollega</button>`;
+    }
+    return `<div class="doc-item" style="cursor:default;flex-wrap:wrap">
+      <span class="di-num">${tripPeriodo(t)}</span>
+      <span class="di-cli" style="flex:1;min-width:180px">${esc(tripCompany(t))}<br><span style="font-size:.74rem;color:var(--ink-2)">${esc(t.partenza)} → ${esc(t.destinazione)}${t.owner_nome?' · '+esc(t.owner_nome):''}</span></span>
+      <span class="di-tot">${fe(tripTotal(t))}</span>
+      <span style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-sm" onclick="genTravelPDF('${t.id}')">PDF nota spese</button>
+        ${t.invoice_id?stato:`<button class="btn btn-sm btn-primary" onclick="transferToDoc('${t.id}')">Aggiungi in documento</button>`}
+      </span></div>`;
+  }).join('');
+}
+async function unlinkTrip(id){
+  if(!confirm('Scollegare la trasferta dal documento?\n\nFallo solo se hai già tolto la voce "Rimborso spese trasferta" dal documento (o se il preventivo non verrà fatturato): altrimenti la trasferta potrebbe essere inserita due volte.'))return;
+  const{error}=await supabaseClient.rpc('travel_trip_unlink_invoice',{p_trip_id:id});
+  if(error){alert('Errore: '+error.message);return;}
+  renderTrips();
 }
 
 // ══ PDF ══
@@ -2568,18 +2596,22 @@ ${firmaB64?`<div style="margin-top:10mm;display:flex;flex-direction:column;align
 ${s.footer?`<div class="ft">${s.footer}</div>`:''}
 </div></body></html>`);
 }
-function genTravelPDF(){
-  const s=settings,km=gN('t-km'),tar=gN('t-tar'),rm=km*tar;
-  const ped=gN('t-ped'),park=gN('t-park'),mez=gN('t-mezzo'),vi=gN('t-vitto'),al=gN('t-alloggio'),al2=gN('t-altre');
-  const tot=rm+ped+park+mez+vi+al+al2;
-  const td=document.getElementById('t-data').value;
-  const df=td?new Date(td+'T12:00:00').toLocaleDateString('it-IT',{day:'2-digit',month:'long',year:'numeric'}):'';
-  const sp=[[`🚗 Rimborso chilometrico (${km} km × €${tar.toFixed(4)}/km — Tab. ACI 2026)`,rm],['🛣️ Pedaggi autostradali',ped],['🅿️ Parcheggi',park],['🚆 Treni/Aerei/Taxi',mez],['🍽️ Vitto',vi],['🏨 Alloggio',al],['📎 Altre spese',al2]].filter(([,v])=>v>0);
-  const rh=sp.map(([l,v])=>`<tr><td class="tl">${l}</td><td class="tr">${fe(v)}</td></tr>`).join('');
-  const da=document.getElementById('t-da').value,a=document.getElementById('t-a').value;
-  const ir=[[document.getElementById('t-cli').value,'Cliente / Progetto'],[da&&a?`${da} → ${a}`:null,'Percorso'],[document.getElementById('t-veicolo').value,'Veicolo'],[document.getElementById('t-desc').value,'Attività']].filter(([v])=>v);
-  const ih=ir.map(([v,k])=>`<tr><td class="ik">${k}</td><td class="iv">${v}</td></tr>`).join('');
-  openPrint(`<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Nota Spese</title><link href="" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:var(--font-sans);font-size:10pt;color:#1C1B18;background:white}.page{width:210mm;min-height:297mm;padding:18mm 16mm;margin:0 auto}.hdr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8mm}.nome{font-family:Georgia,'Times New Roman',serif;font-size:16pt}.info{font-size:8pt;color:#888;margin-top:2mm;line-height:1.7}.hr{text-align:right}.dtp{font-size:9pt;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#1A5FA8}.dda{font-size:9pt;color:#666;margin-top:1mm}.div{border:none;border-top:2pt solid #1A5FA8;margin:5mm 0}.sec{font-size:7.5pt;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:#1A5FA8;margin:5mm 0 2mm}.it{width:100%;border-collapse:collapse;margin-bottom:5mm}.it td{padding:2.5mm 3mm;font-size:9pt;border:.5pt solid #E2DDD8}.ik{background:#F5F3EE;font-weight:600;color:#555;width:30%}.iv{background:white}table{width:100%;border-collapse:collapse;font-size:9pt}thead td{background:#1C1B18;color:white;padding:2.5mm 3mm;font-weight:600;font-size:8pt}thead td:last-child{text-align:right}.tl{padding:3mm;border-bottom:.5pt solid #E2DDD8;background:#FAFAF8}.tr{padding:3mm;border-bottom:.5pt solid #E2DDD8;text-align:right;font-weight:600;background:white}.tt td{background:#1A5FA8!important;color:white!important;font-weight:700;font-size:11pt;padding:3.5mm 3mm}.tt td:last-child{text-align:right}.ft{margin-top:10mm;padding-top:3mm;border-top:.5pt solid #DDD;font-size:7pt;color:#AAA;font-style:italic;line-height:1.6}@media print{*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}@page{size:A4;margin:0}}</style></head><body><div class="page">${logoHTML()}<div class="hdr"><div><div class="nome">${s.nome||'—'}</div><div class="info">${[s.cf&&'C.F.: '+s.cf,s.piva&&'P.IVA: '+s.piva,s.email,s.tel].filter(Boolean).join(' &nbsp;|&nbsp; ')}${[s.ind,[s.cap,s.comune,s.prov?'('+s.prov.toUpperCase()+')':null].filter(Boolean).join(' ')].filter(Boolean).join(', ')?'<br>'+[s.ind,[s.cap,s.comune,s.prov?'('+s.prov.toUpperCase()+')':null].filter(Boolean).join(' ')].filter(Boolean).join(', '):''}</div></div><div class="hr"><div class="dtp">Nota Spese Trasferta</div><div class="dda">${df}</div></div></div><hr class="div">${ih?`<div class="sec">Dettagli trasferta</div><table class="it"><tbody>${ih}</tbody></table>`:''}<div class="sec">Dettaglio spese</div><table><thead><tr><td>Voce</td><td style="text-align:right">Importo</td></tr></thead><tbody>${rh}<tr class="tt"><td>Totale rimborso</td><td>${fe(tot)}</td></tr></tbody></table><div class="ft">I rimborsi chilometrici sono calcolati in base alle Tabelle ACI 2026 (G.U. n. 297 del 23/12/2025). Tutte le spese sono documentate da ricevuta fiscale.</div></div></body></html>`);
+function genTravelPDF(tripId){
+  const t=trips.find(x=>x.id===tripId);if(!t)return;
+  const s=settings,km=Number(t.km_andata)||0,kmTot=tripR2(km*(t.andata_ritorno?2:1)),tar=Number(t.tariffa_km)||0,rm=tripR2(t.rimborso_km);
+  const giorni=(t.travel_trip_days||[]).slice().sort((a,b)=>a.giorno.localeCompare(b.giorno));
+  const perVoce=TRIP_VOCI.map(([k,l])=>[l,tripR2(giorni.reduce((x,d)=>x+tripR2(d[k]),0))]);
+  const tot=tripTotal(t);
+  const sp=[[`🚗 Rimborso chilometrico (${String(kmTot).replace('.',',')} km${t.andata_ritorno?' A/R':''} × €${tar.toFixed(4).replace('.',',')}/km — Tab. ACI 2026)`,rm],...perVoce].filter(([,v])=>v>0);
+  const rh=sp.map(([l,v])=>`<tr><td class="tl">${esc(l)}</td><td class="tr">${fe(v)}</td></tr>`).join('');
+  // dettaglio giornaliero: solo le colonne con almeno un importo
+  const voci=TRIP_VOCI.filter(([k])=>giorni.some(d=>tripR2(d[k])>0));
+  const gh=voci.length?`<div class="sec">Dettaglio giornaliero</div><table><thead><tr><td>Giorno</td>${voci.map(([,l])=>`<td style="text-align:right">${esc(l.replace(/^\S+\s/,''))}</td>`).join('')}<td style="text-align:right">Totale</td></tr></thead><tbody>${
+    giorni.map(d=>`<tr><td class="tl">${tripFmt(d.giorno)}</td>${voci.map(([k])=>`<td class="tr">${tripR2(d[k])>0?fe(d[k]):'—'}</td>`).join('')}<td class="tr">${fe(tripDayTotal(d))}</td></tr>`).join('')}</tbody></table>`:'';
+  const ir=[[tripCompany(t),'Cliente'],[tripPeriodo(t),'Periodo'],[`${t.partenza} → ${t.destinazione}`,'Percorso'],[t.caselli,'Caselli'],[t.veicolo,'Veicolo'],[t.owner_nome,'Consulente'],[t.descrizione,'Attività']].filter(([v])=>v);
+  const ih=ir.map(([v,k])=>`<tr><td class="ik">${k}</td><td class="iv">${esc(v)}</td></tr>`).join('');
+  const addr=[s.ind,[s.cap,s.comune,s.prov?'('+s.prov.toUpperCase()+')':null].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  openPrint(`<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Nota Spese</title><link href="" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:var(--font-sans);font-size:10pt;color:#1C1B18;background:white}.page{width:210mm;min-height:297mm;padding:18mm 16mm;margin:0 auto}.hdr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8mm}.nome{font-family:Georgia,'Times New Roman',serif;font-size:16pt}.info{font-size:8pt;color:#888;margin-top:2mm;line-height:1.7}.hr{text-align:right}.dtp{font-size:9pt;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#1A5FA8}.dda{font-size:9pt;color:#666;margin-top:1mm}.div{border:none;border-top:2pt solid #1A5FA8;margin:5mm 0}.sec{font-size:7.5pt;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:#1A5FA8;margin:5mm 0 2mm}.it{width:100%;border-collapse:collapse;margin-bottom:5mm}.it td{padding:2.5mm 3mm;font-size:9pt;border:.5pt solid #E2DDD8}.ik{background:#F5F3EE;font-weight:600;color:#555;width:30%}.iv{background:white}table{width:100%;border-collapse:collapse;font-size:9pt}thead td{background:#1C1B18;color:white;padding:2.5mm 3mm;font-weight:600;font-size:8pt}thead td:last-child{text-align:right}.tl{padding:3mm;border-bottom:.5pt solid #E2DDD8;background:#FAFAF8}.tr{padding:3mm;border-bottom:.5pt solid #E2DDD8;text-align:right;font-weight:600;background:white;white-space:nowrap}.tt td{background:#1A5FA8!important;color:white!important;font-weight:700;font-size:11pt;padding:3.5mm 3mm}.tt td:last-child{text-align:right}.ft{margin-top:10mm;padding-top:3mm;border-top:.5pt solid #DDD;font-size:7pt;color:#AAA;font-style:italic;line-height:1.6}@media print{*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}@page{size:A4;margin:0}}</style></head><body><div class="page">${logoHTML()}<div class="hdr"><div><div class="nome">${s.nome||'—'}</div><div class="info">${[s.cf&&'C.F.: '+s.cf,s.piva&&'P.IVA: '+s.piva,s.email,s.tel].filter(Boolean).join(' &nbsp;|&nbsp; ')}${addr?'<br>'+addr:''}</div></div><div class="hr"><div class="dtp">Nota Spese Trasferta</div><div class="dda">${tripPeriodo(t)}</div></div></div><hr class="div">${ih?`<div class="sec">Dettagli trasferta</div><table class="it"><tbody>${ih}</tbody></table>`:''}<div class="sec">Riepilogo spese</div><table><thead><tr><td>Voce</td><td style="text-align:right">Importo</td></tr></thead><tbody>${rh}<tr class="tt"><td>Totale rimborso</td><td>${fe(tot)}</td></tr></tbody></table>${gh}<div class="ft">I rimborsi chilometrici sono calcolati in base alle Tabelle ACI 2026 (G.U. n. 297 del 23/12/2025). Tutte le spese sono documentate da ricevuta fiscale.</div></div></body></html>`);
 }
 
 // ══ CONVERTI DOCUMENTO: preventivo→proforma, proforma→fattura ══
@@ -2603,6 +2635,7 @@ async function convDoc(id, targetTipo, e){
   rows=(d.righe||[]).map(r=>({...r,id:String(Date.now()+Math.random())}));
   renderRows();
   pendingPrevRef=d.num;
+  pendingTravelMoveFrom=id; // le trasferte dell'originale passano al nuovo documento quando viene salvato
   editClientRef=(d.clientId&&d.clientTipo)?{id:d.clientId,tipo:d.clientTipo}:null;
   const toLabel=targetTipo==='proforma'?'proforma':'fattura';
   document.getElementById('form-title').textContent=`Nuovo ${toLabel} da ${d.num}`;
@@ -2612,65 +2645,62 @@ async function convDoc(id, targetTipo, e){
 }
 
 // ══ TRASFERISCI SPESE VIAGGIO IN DOCUMENTO ══
-function travelTotal(){
-  return gN('t-km')*gN('t-tar')+gN('t-ped')+gN('t-park')+gN('t-mezzo')+gN('t-vitto')+gN('t-alloggio')+gN('t-altre');
+// Destinazioni ammesse: documenti in BOZZA e PREVENTIVI (non fiscali, anche se
+// già inviati). Mai fatture/proforma/note emesse. Esclusi sempre gli archiviati,
+// le proforma di un piano tranche (si fatturano solo dal piano, vedi
+// trancheProformaMap) e i preventivi con un piano tranche (gli importi delle
+// tranche sono fissati: una voce in più sballerebbe il piano). La trasferta
+// viene collegata al documento solo DOPO il salvataggio riuscito (vedi saveDoc).
+let tranchePreventiviSet=new Set();
+function tripTargetOk(d){
+  if(d.archiviato||trancheProformaMap[d.id])return false;
+  if(d.tipo==='preventivo')return !tranchePreventiviSet.has(d.id);
+  return d.status==='bozza';
 }
-function travelDesc(){
-  const da=document.getElementById('t-da').value,a=document.getElementById('t-a').value;
-  const data=document.getElementById('t-data').value;
-  const cliente=document.getElementById('t-cli').value;
-  let desc='Rimborso spese trasferta';
-  if(da&&a) desc+=` ${da} - ${a}`;
-  if(data) desc+=` del ${new Date(data+'T12:00:00').toLocaleDateString('it-IT')}`;
-  if(cliente) desc+=` (${cliente})`;
-  return desc;
-}
-function transferToDoc(){
-  const tot=travelTotal();
-  if(tot<=0){alert('Nessuna spesa da trasferire. Compila prima le spese di viaggio.');return;}
-  if(!docs.length){
-    if(confirm(`Totale spese: ${fe(tot)}\nNon ci sono documenti esistenti. Creare un nuovo documento?`))transferToNewDoc();
-    return;
-  }
-  // Mostra lista documenti
+async function transferToDoc(tripId){
+  const t=trips.find(x=>x.id===tripId);if(!t)return;
+  if(t.invoice_id){alert('Questa trasferta è già inserita in un documento.');return;}
+  const tot=tripTotal(t);
+  if(tot<=0){alert('La trasferta non ha importi da inserire.');return;}
+  transferTripId=tripId;
+  // preventivi con un piano tranche (anche solo da fatturare), letti freschi
+  const{data:qt,error:qtErr}=await supabaseClient.from('quote_tranches').select('preventivo_id');
+  if(qtErr){alert('Errore nel controllo dei piani a tranche: '+qtErr.message);return;}
+  tranchePreventiviSet=new Set((qt||[]).map(r=>r.preventivo_id));
   const list=document.getElementById('transfer-doc-list');
-  const openDocs=docs.filter(d=>d.status!=='pagato');
-  list.innerHTML=openDocs.length
-    ?openDocs.map(d=>`
+  const bozze=docs.filter(tripTargetOk);
+  list.innerHTML=bozze.length
+    ?bozze.map(d=>`
       <div class="doc-item" onclick="transferToExisting('${d.id}')" style="cursor:pointer">
-        <span class="di-num">${d.num}</span>
-        <span class="di-cli">${d.cliente?.nome||'—'}</span>
-        <span class="badge ${d.tipo==='preventivo'?'bp':'bf'}">${d.tipo}</span>
+        <span class="di-num">${d.num?esc(d.num):'Bozza'}</span>
+        <span class="di-cli">${esc(d.cliente?.nome||'—')}</span>
+        <span class="badge ${d.tipo==='preventivo'?'bp':'bf'}">${esc(d.tipo)}</span>
         <span class="di-tot">${fe(d.totale||0)}</span>
         <span style="font-size:.75rem;color:var(--accent);margin-left:auto;white-space:nowrap">+ ${fe(tot)}</span>
       </div>`).join('')
-    :'<p style="font-size:.83rem;color:var(--ink-2);padding:8px 0">Nessun documento aperto. Usa il pulsante in basso per crearne uno nuovo.</p>';
+    :'<p style="font-size:.83rem;color:var(--ink-2);padding:8px 0">Nessun documento in bozza né preventivo disponibile. Usa il pulsante in basso per crearne uno nuovo.</p>';
   document.getElementById('ov-transfer').classList.add('open');
 }
 function transferToExisting(id){
-  const d=docs.find(x=>x.id===id);if(!d)return;
-  const tot=travelTotal();
-  const desc=travelDesc();
-  d.righe=d.righe||[];
-  d.righe.push({id:String(Date.now()),desc,qty:1,um:'forfait',price:tot});
-  // Ricalcola totale
-  const netto=d.righe.reduce((s,r)=>s+r.qty*r.price,0);
-  d.totale=parseFloat((netto*(1+(d.ivaRate||0)/100)).toFixed(2));
-  savePD();
+  const d=docs.find(x=>x.id===id),t=trips.find(x=>x.id===transferTripId);if(!d||!t)return;
+  if(!tripTargetOk(d)){alert('Le spese di trasferta si possono aggiungere solo a documenti in bozza o a preventivi (non archiviati e senza piano a tranche).');return;}
+  if(d.clientId&&d.clientId!==t.company_id&&!confirm(`Il documento è intestato a "${d.cliente?.nome||'—'}", la trasferta è per "${tripCompany(t)}".\n\nAggiungere comunque?`))return;
   closeOv('transfer');
-  // Apri il documento per revisione
   editDoc(d.id);
-  showToast();
+  rows.push({id:String(Date.now()),desc:tripLineDesc(t),qty:1,um:'forfait',price:tripTotal(t),travelTripId:t.id});
+  pendingTravelTripId=t.id;
+  renderRows();
+  showMsg('Voce aggiunta: salva il documento per confermare.','ok');
 }
 function transferToNewDoc(){
+  const t=trips.find(x=>x.id===transferTripId);if(!t)return;
   closeOv('transfer');
-  const tot=travelTotal();
-  const desc=travelDesc();
   resetDoc();
-  // Pre-popola cliente dal campo trasferta se disponibile
-  const cli=document.getElementById('t-cli').value;
-  if(cli) document.getElementById('d-cnome').value=cli;
-  rows=[{id:String(Date.now()),desc,qty:1,um:'forfait',price:tot}];
+  const c=clients.find(x=>x.id===t.company_id&&x.tipo==='azienda');
+  if(c)useClient(c.id,'azienda');
+  else document.getElementById('d-cnome').value=tripCompany(t);
+  rows=[{id:String(Date.now()),desc:tripLineDesc(t),qty:1,um:'forfait',price:tripTotal(t),travelTripId:t.id}];
+  pendingTravelTripId=t.id;
   renderRows();
   document.getElementById('form-title').textContent='Nuovo documento (spese trasferta)';
   goTo('nuovo');
