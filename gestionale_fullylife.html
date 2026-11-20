@@ -863,6 +863,31 @@ textarea{resize:vertical;min-height:58px}
 <div class="overlay" id="ov-prod"><div class="modal"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:13px"><h3>Scegli dal catalogo</h3><button class="btn btn-sm" onclick="closeOv('prod')">✕</button></div><div id="pk-prod"></div></div></div>
 <div class="overlay" id="ov-cli"><div class="modal"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:13px"><h3>Carica cliente</h3><button class="btn btn-sm" onclick="closeOv('cli')">✕</button></div><input type="text" id="pk-cli-search" placeholder="🔍  Cerca per nome, P.IVA, email…" oninput="renderCliPicker()" style="width:100%;font-size:.85rem;margin-bottom:10px"><div id="pk-cli"></div></div></div>
 
+<!-- Modal: invio XML all'SDI. Il mailto parte da un clic diretto (non da
+     un setTimeout: Chrome/Safari possono bloccarlo); se sul computer nessun
+     programma gestisce mailto (es. Mac senza Mail configurata) si copiano a
+     mano indirizzo, oggetto e testo nella PEC via web. -->
+<div class="overlay" id="ov-sdi">
+  <div class="modal">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <h3>Invia la fattura all'SDI</h3>
+      <button class="btn btn-sm" onclick="closeOv('sdi')">✕</button>
+    </div>
+    <p style="font-size:.8rem;color:var(--ink-2);margin-bottom:12px">Il file <strong id="sdi-file"></strong> è stato scaricato nella cartella Download. Invialo dalla tua <strong>PEC</strong> e ricorda di <strong>allegarlo</strong>: la mail non lo allega da sola.</p>
+    <a class="btn btn-primary" id="sdi-mailto" href="#" style="text-decoration:none;margin-bottom:14px">✉️ Apri mail per l'SDI</a>
+    <p style="font-size:.76rem;color:var(--ink-2);margin-bottom:10px">Se non si apre nulla (nessun programma di posta impostato su questo computer), copia i dati qui sotto nella PEC via web:</p>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div><div style="font-size:.7rem;font-weight:600;color:var(--ink-2);margin-bottom:3px">Destinatario</div>
+        <div style="display:flex;gap:6px"><input type="text" id="sdi-to" readonly style="flex:1"><button class="btn btn-sm" onclick="sdiCopy('sdi-to',this)">Copia</button></div></div>
+      <div><div style="font-size:.7rem;font-weight:600;color:var(--ink-2);margin-bottom:3px">Oggetto</div>
+        <div style="display:flex;gap:6px"><input type="text" id="sdi-subj" readonly style="flex:1"><button class="btn btn-sm" onclick="sdiCopy('sdi-subj',this)">Copia</button></div></div>
+      <div><div style="font-size:.7rem;font-weight:600;color:var(--ink-2);margin-bottom:3px">Testo</div>
+        <textarea id="sdi-body" readonly rows="9" style="width:100%;font-size:.78rem"></textarea>
+        <button class="btn btn-sm" style="margin-top:4px" onclick="sdiCopy('sdi-body',this)">Copia testo</button></div>
+    </div>
+  </div>
+</div>
+
 <!-- Modal: trasferisci spese viaggio in documento -->
 <div class="overlay" id="ov-transfer">
   <div class="modal">
@@ -2884,10 +2909,10 @@ ${righeCalc.map((r,i)=>`      <DettaglioLinee>
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');a.href=url;a.download=fileName;a.click();URL.revokeObjectURL(url);
 
-  // Apri client di posta con destinatario SDI, oggetto e corpo già compilati
-  setTimeout(()=>{
-    const oggetto=encodeURIComponent(`Fattura elettronica ${d.num}`);
-    const corpo=encodeURIComponent(
+  // Finestra con pulsante mailto (clic diretto) + dati da copiare a mano
+  const to=settings.emailSdi||'sdi01@pec.fatturapa.it';
+  const oggetto=`Fattura elettronica ${d.num}`;
+  const corpo=
 `Gentile Sistema di Interscambio,
 
 in allegato il file XML della fattura elettronica:
@@ -2899,11 +2924,19 @@ in allegato il file XML della fattura elettronica:
 • Importo: ${fe(d.totale||0)}
 
 Cordiali saluti,
-${settings.nome||''}`.trim()
-    );
-    const mailtoLink=`mailto:${settings.emailSdi||'sdi01@pec.fatturapa.it'}?subject=${oggetto}&body=${corpo}`;
-    window.location.href=mailtoLink;
-  }, 800); // piccolo delay per far partire prima il download
+${settings.nome||''}`.trim();
+  document.getElementById('sdi-file').textContent=fileName;
+  document.getElementById('sdi-to').value=to;
+  document.getElementById('sdi-subj').value=oggetto;
+  document.getElementById('sdi-body').value=corpo;
+  document.getElementById('sdi-mailto').href=`mailto:${to}?subject=${encodeURIComponent(oggetto)}&body=${encodeURIComponent(corpo)}`;
+  document.getElementById('ov-sdi').classList.add('open');
+}
+async function sdiCopy(id,btn){
+  const el=document.getElementById(id);
+  try{await navigator.clipboard.writeText(el.value);}
+  catch(e){el.select();document.execCommand('copy');} // file:// o browser senza Clipboard API
+  const t=btn.textContent;btn.textContent='✓ Copiato';setTimeout(()=>{btn.textContent=t;},1500);
 }
 
 // ══ UTILS ══
